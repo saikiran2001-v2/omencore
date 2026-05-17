@@ -24,6 +24,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     private const string HP_WMI_FAN1_OUTPUT = "/sys/devices/platform/hp-wmi/fan1_output";
     private const string HP_WMI_FAN2_OUTPUT = "/sys/devices/platform/hp-wmi/fan2_output";
     private const string HP_WMI_FAN_ALWAYS_ON = "/sys/devices/platform/hp-wmi/fan_always_on";
+    private const string RaplPl1Path = "/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw";
     private static readonly string[] PowerProfilesCtlCandidates =
     {
         "/usr/bin/powerprofilesctl",
@@ -121,6 +122,9 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
             // Read battery status
             (status.BatteryPercentage, status.IsOnBattery) = await ReadBatteryStatusAsync();
+
+            // Read GPU utilization
+            status.GpuUsage = await ReadGpuUsageAsync();
 
             // Read power consumption (RAPL on Intel, power_now fallback)
             status.PowerConsumption = await ReadPowerConsumptionAsync();
@@ -255,6 +259,12 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
         // Read GPU name
         _capabilities.GpuName = await ReadGpuNameAsync();
+
+        // Longevity: CPU RAPL power limit
+        _capabilities.SupportsCpuPowerLimit = File.Exists(RaplPl1Path);
+
+        // Longevity: battery charge limit (sysfs)
+        _capabilities.SupportsBatteryChargeLimit = await FindChargeThresholdPathAsync() != null;
     }
 
     private static bool DetectFourZoneRgbSupport()
@@ -1064,6 +1074,57 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         return 0;
     }
 
+    private static async Task<double> ReadGpuUsageAsync()
+    {
+        // NVIDIA: query via nvidia-smi
+        var nvidiaSmi = new[] { "/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi" }
+            .FirstOrDefault(File.Exists);
+        if (nvidiaSmi != null)
+        {
+            try
+            {
+                using var proc = new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = nvidiaSmi,
+                        Arguments = "--query-gpu=utilization.gpu --format=csv,noheader,nounits",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
+                proc.Start();
+                var stdout = await proc.StandardOutput.ReadToEndAsync();
+                await proc.WaitForExitAsync();
+                if (proc.ExitCode == 0 &&
+                    double.TryParse(stdout.Trim(), System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out var pct))
+                {
+                    return pct;
+                }
+            }
+            catch { }
+        }
+
+        // AMD / Intel: gpu_busy_percent in DRM sysfs
+        foreach (var card in SafeEnumerateDirectories("/sys/class/drm"))
+        {
+            var busyPath = Path.Combine(card, "device", "gpu_busy_percent");
+            if (!File.Exists(busyPath)) continue;
+            try
+            {
+                var raw = await File.ReadAllTextAsync(busyPath);
+                if (double.TryParse(raw.Trim(), out var busy))
+                    return busy;
+            }
+            catch { }
+        }
+
+        return 0;
+    }
+
     private static async Task<int> ReadFanRpmAsync(string type)
     {
         try
@@ -1384,6 +1445,125 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             "0x8086" => $"Intel Integrated Graphics{suffix}",
             _ => $"GPU {vendorId}{suffix}"
         };
+    }
+
+    #endregion
+
+    #region Longevity / Battery Care
+
+    public async Task<(double healthPercent, int cycleCount)> GetBatteryHealthAsync()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return (100.0, 0);
+
+        double health = 100.0;
+        int cycles = 0;
+        try
+        {
+            var batteries = Directory.GetDirectories(POWER_SUPPLY);
+            foreach (var bat in batteries)
+            {
+                var typePath = Path.Combine(bat, "type");
+                if (!File.Exists(typePath)) continue;
+                if ((await File.ReadAllTextAsync(typePath)).Trim() != "Battery") continue;
+
+                var fullDesignPath = Path.Combine(bat, "energy_full_design");
+                var fullPath = Path.Combine(bat, "energy_full");
+                var cyclePath = Path.Combine(bat, "cycle_count");
+
+                if (File.Exists(fullDesignPath) && File.Exists(fullPath))
+                {
+                    if (long.TryParse((await File.ReadAllTextAsync(fullDesignPath)).Trim(), out var design) &&
+                        long.TryParse((await File.ReadAllTextAsync(fullPath)).Trim(), out var full) &&
+                        design > 0)
+                    {
+                        health = Math.Round(100.0 * full / design, 1);
+                    }
+                }
+                if (File.Exists(cyclePath) &&
+                    int.TryParse((await File.ReadAllTextAsync(cyclePath)).Trim(), out var c))
+                {
+                    cycles = c;
+                }
+                break;
+            }
+        }
+        catch { }
+        return (health, cycles);
+    }
+
+    public async Task<int?> GetCpuPowerLimitAsync()
+    {
+        if (!File.Exists(RaplPl1Path)) return null;
+        try
+        {
+            var raw = await File.ReadAllTextAsync(RaplPl1Path);
+            if (long.TryParse(raw.Trim(), out var uw))
+                return (int)(uw / 1_000_000);
+        }
+        catch { }
+        return null;
+    }
+
+    public async Task SetCpuPowerLimitAsync(int watts)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return;
+        var uw = (long)watts * 1_000_000;
+        await WriteSysfsAsync(RaplPl1Path, uw.ToString());
+    }
+
+    private static async Task<string?> FindChargeThresholdPathAsync()
+    {
+        if (!Directory.Exists(POWER_SUPPLY)) return null;
+        foreach (var bat in Directory.GetDirectories(POWER_SUPPLY))
+        {
+            var typePath = Path.Combine(bat, "type");
+            var threshPath = Path.Combine(bat, "charge_control_end_threshold");
+            if (!File.Exists(typePath) || !File.Exists(threshPath)) continue;
+            try
+            {
+                if ((await File.ReadAllTextAsync(typePath)).Trim() == "Battery")
+                    return threshPath;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    public async Task<int> GetChargeEndThresholdAsync()
+    {
+        var path = await FindChargeThresholdPathAsync();
+        if (path == null) return 0;
+        try
+        {
+            var raw = await File.ReadAllTextAsync(path);
+            if (int.TryParse(raw.Trim(), out var pct))
+                return pct;
+        }
+        catch { }
+        return 0;
+    }
+
+    public async Task SetChargeEndThresholdAsync(int percent)
+    {
+        var path = await FindChargeThresholdPathAsync();
+        if (path == null)
+            throw new NotSupportedException("Battery charge limit not available via sysfs on this hardware. Set it in BIOS: F10 → Advanced → Battery Care Mode.");
+        await WriteSysfsAsync(path, percent.ToString());
+    }
+
+    private static async Task WriteSysfsAsync(string path, string value)
+    {
+        try
+        {
+            await using var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(value);
+            await fs.WriteAsync(bytes);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new UnauthorizedAccessException($"Cannot write to {path}. Run OmenCore as root or ensure the udev rule is applied.", ex);
+        }
     }
 
     #endregion

@@ -49,6 +49,8 @@ public class SystemCapabilities
     public string ModelName { get; set; } = "Unknown";
     public string CpuName { get; set; } = "Unknown";
     public string GpuName { get; set; } = "Unknown";
+    public bool SupportsCpuPowerLimit { get; set; }
+    public bool SupportsBatteryChargeLimit { get; set; }
 }
 
 /// <summary>
@@ -125,7 +127,34 @@ public interface IHardwareService
     /// Sets keyboard color for a specific zone (0-3).
     /// </summary>
     Task SetKeyboardZoneColorAsync(int zone, byte r, byte g, byte b);
-    
+
+    /// <summary>
+    /// Gets battery health as a percentage (energy_full / energy_full_design).
+    /// </summary>
+    Task<(double healthPercent, int cycleCount)> GetBatteryHealthAsync();
+
+    /// <summary>
+    /// Gets the current CPU sustained power limit in watts (RAPL PL1).
+    /// Returns null if not supported.
+    /// </summary>
+    Task<int?> GetCpuPowerLimitAsync();
+
+    /// <summary>
+    /// Sets the CPU sustained power limit in watts (RAPL PL1).
+    /// </summary>
+    Task SetCpuPowerLimitAsync(int watts);
+
+    /// <summary>
+    /// Gets the battery charge end threshold (0 = not supported).
+    /// </summary>
+    Task<int> GetChargeEndThresholdAsync();
+
+    /// <summary>
+    /// Sets the battery charge end threshold (percent).
+    /// Throws NotSupportedException if the hardware doesn't expose this via sysfs.
+    /// </summary>
+    Task SetChargeEndThresholdAsync(int percent);
+
     /// <summary>
     /// Event raised when hardware status changes.
     /// </summary>

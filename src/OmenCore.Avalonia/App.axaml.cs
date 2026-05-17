@@ -70,6 +70,7 @@ public partial class App : Application
         services.AddTransient<DashboardViewModel>();
         services.AddTransient<FanControlViewModel>();
         services.AddTransient<SystemControlViewModel>();
+        services.AddTransient<LongevityViewModel>();
         services.AddTransient<SettingsViewModel>();
     }
 }

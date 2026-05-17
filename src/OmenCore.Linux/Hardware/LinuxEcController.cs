@@ -43,7 +43,7 @@ public class LinuxEcController
     // Discovered at runtime since hwmon number varies
     private string? _hwmonPwm1EnablePath;
     private string? _hwmonPwm2EnablePath;
-    private string? _hwmonPwm1Path;
+    private string? _hwmonPwm1Path;   // pwm1: 0-255 manual PWM value
     private string? _hwmonPwm2Path;
     private string? _hwmonFan1InputPath;
     private string? _hwmonFan2InputPath;
@@ -249,22 +249,13 @@ public class LinuxEcController
         var hpWmiHwmonPath = Path.Combine(HP_WMI_PATH, "hwmon");
         if (!Directory.Exists(hpWmiHwmonPath))
             return;
-        
+
         foreach (var hwmonDir in Directory.GetDirectories(hpWmiHwmonPath))
         {
             var pwm1Enable = Path.Combine(hwmonDir, "pwm1_enable");
             if (File.Exists(pwm1Enable))
             {
                 _hwmonPwm1EnablePath = pwm1Enable;
-                
-                // Check for fan RPM inputs
-                var fan1Input = Path.Combine(hwmonDir, "fan1_input");
-                if (File.Exists(fan1Input))
-                    _hwmonFan1InputPath = fan1Input;
-                
-                var fan2Input = Path.Combine(hwmonDir, "fan2_input");
-                if (File.Exists(fan2Input))
-                    _hwmonFan2InputPath = fan2Input;
 
                 var pwm1 = Path.Combine(hwmonDir, "pwm1");
                 if (File.Exists(pwm1))
@@ -277,7 +268,15 @@ public class LinuxEcController
                 var pwm2 = Path.Combine(hwmonDir, "pwm2");
                 if (File.Exists(pwm2))
                     _hwmonPwm2Path = pwm2;
-                
+
+                var fan1Input = Path.Combine(hwmonDir, "fan1_input");
+                if (File.Exists(fan1Input))
+                    _hwmonFan1InputPath = fan1Input;
+
+                var fan2Input = Path.Combine(hwmonDir, "fan2_input");
+                if (File.Exists(fan2Input))
+                    _hwmonFan2InputPath = fan2Input;
+
                 break;
             }
         }
@@ -808,6 +807,71 @@ public class LinuxEcController
     }
     
     /// <summary>
+    /// Set fan speed via manual hwmon PWM (pwm_enable=1 + pwm1 value).
+    /// percent is 0-100; internally mapped to 0-255.
+    /// Returns false if pwm1 path is not available or write fails — caller should
+    /// restore pwm_enable=2 (auto) on failure.
+    /// </summary>
+    public bool SetHwmonManualPwm(int percent)
+    {
+        if (_hwmonPwm1EnablePath == null || _hwmonPwm1Path == null)
+            return false;
+
+        try
+        {
+            var raw = Math.Clamp((int)Math.Round(percent * 2.55), 0, 255);
+            // Enable manual mode first, then write target value
+            File.WriteAllText(_hwmonPwm1EnablePath, "1");
+            File.WriteAllText(_hwmonPwm1Path, raw.ToString());
+            if (_hwmonPwm2EnablePath != null)
+                File.WriteAllText(_hwmonPwm2EnablePath, "1");
+            if (_hwmonPwm2Path != null)
+                File.WriteAllText(_hwmonPwm2Path, raw.ToString());
+            return true;
+        }
+        catch
+        {
+            // Restore BIOS auto if we partially set manual mode
+            try { File.WriteAllText(_hwmonPwm1EnablePath, "2"); } catch { }
+            if (_hwmonPwm2EnablePath != null)
+                try { File.WriteAllText(_hwmonPwm2EnablePath, "2"); } catch { }
+            return false;
+        }
+    }
+
+    // Cached result of whether pwm_enable=1 is accepted by this board's driver.
+    // null = not yet tested, true = supported, false = rejected (EINVAL on write).
+    private bool? _pwmMode1Supported;
+
+    /// <summary>
+    /// Attempt to engage pwm_enable=1 on boards that have no pwm1 target file.
+    /// Some hp-wmi driver revisions treat value 1 as a "boost" preset even without
+    /// an explicit pwm1 target. Reads back immediately to confirm the value stuck.
+    /// Result is cached — if the driver rejected it once we skip all future retries.
+    /// </summary>
+    private bool TryHwmonPwmMode1()
+    {
+        if (_hwmonPwm1EnablePath == null || _pwmMode1Supported == false)
+            return false;
+
+        try
+        {
+            File.WriteAllText(_hwmonPwm1EnablePath, "1");
+            if (_hwmonPwm2EnablePath != null)
+                File.WriteAllText(_hwmonPwm2EnablePath, "1");
+
+            var readBack = File.ReadAllText(_hwmonPwm1EnablePath).Trim();
+            _pwmMode1Supported = readBack == "1";
+            return _pwmMode1Supported.Value;
+        }
+        catch
+        {
+            _pwmMode1Supported = false;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Get current hwmon pwm_enable value.
     /// </summary>
     public int? GetHwmonPwmEnable()
@@ -1052,40 +1116,66 @@ public class LinuxEcController
     private bool SetFanProfileViaAcpiHwmon(FanProfile profile)
     {
         bool success = false;
-        
-        // Map fan profile to ACPI platform profile
+
+        // Set ACPI platform profile for thermal management (affects CPU power limits under load)
         if (HasAcpiProfileAccess)
         {
             var acpiProfile = profile switch
             {
-                FanProfile.Auto => "balanced",
-                FanProfile.Silent => "low-power",
+                FanProfile.Auto     => "balanced",
+                FanProfile.Silent   => "low-power",
                 FanProfile.Balanced => "balanced",
-                FanProfile.Gaming => "performance",
-                FanProfile.Max => "performance",
+                FanProfile.Gaming   => "performance",
+                FanProfile.Max      => "performance",
                 _ => "balanced"
             };
-            
             success = SetAcpiProfile(acpiProfile);
         }
-        
-        // For Max mode, also set pwm_enable=0 (full speed) for temporary boost
-        // For Auto mode, set pwm_enable=2 (BIOS auto)
+
         if (HasHwmonFanAccess)
         {
-            var pwmValue = profile switch
+            switch (profile)
             {
-                FanProfile.Max => 0,        // Full speed
-                FanProfile.Auto => 2,       // BIOS auto
-                FanProfile.Silent => 2,     // Let BIOS handle with low-power profile
-                FanProfile.Balanced => 2,   // Let BIOS handle with balanced profile
-                FanProfile.Gaming => 2,     // Let BIOS handle with performance profile
-                _ => 2
-            };
-            
-            success = SetHwmonPwmEnable(pwmValue) || success;
+                case FanProfile.Max:
+                    // Force all fans to full speed
+                    success = SetHwmonPwmEnable(0) || success;
+                    break;
+
+                case FanProfile.Gaming:
+                    // Priority order:
+                    // 1. If pwm1 file exists: manual mode at 60%
+                    // 2. If only pwm1_enable exists: try value=1 (some hp-wmi revisions interpret
+                    //    this as a "boost" preset even without an explicit pwm1 target).
+                    //    Read back to confirm it wasn't silently reverted; fall to auto if it was.
+                    // 3. BIOS auto with performance platform profile
+                    if (SetHwmonManualPwm(60))
+                    {
+                        success = true;
+                    }
+                    else if (_hwmonPwm1Path == null && TryHwmonPwmMode1())
+                    {
+                        success = true;
+                    }
+                    else
+                    {
+                        success = SetHwmonPwmEnable(2) || success;
+                    }
+                    break;
+
+                case FanProfile.Silent:
+                    // Try manual at 25%; fall back to BIOS auto under cool/low-power profile
+                    if (!SetHwmonManualPwm(25))
+                        success = SetHwmonPwmEnable(2) || success;
+                    else
+                        success = true;
+                    break;
+
+                default:
+                    success = SetHwmonPwmEnable(2) || success;
+                    break;
+            }
         }
-        
+
         return success;
     }
     

@@ -65,202 +65,92 @@
                         <TextBlock Classes="sectionHeader" Text="Fan Profiles" VerticalAlignment="Center" Margin="0" />
                     </StackPanel>
                     <TextBlock Classes="caption" Margin="0,4,0,12"
-                               Text="Auto = BIOS control · Silent = cool profile · Balanced = balanced profile · Gaming = performance profile · Max = full speed" />
+                               Text="Silent / Balanced / Gaming apply a BIOS thermal policy — fan difference is visible under CPU/GPU load, not at idle. Max forces immediate full speed." />
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button Classes="secondary" Content="Auto"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="auto"
-                                ToolTip.Tip="Return fans to BIOS automatic control" />
+                                ToolTip.Tip="BIOS manages fans with balanced thermal policy" />
                         <Button Classes="secondary" Content="Silent"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="silent"
-                                ToolTip.Tip="Low-power / quiet thermal profile" />
+                                ToolTip.Tip="Cool/low-power thermal policy — BIOS runs fans quieter under load" />
                         <Button Classes="secondary" Content="Balanced"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="balanced"
-                                ToolTip.Tip="Balanced thermal profile" />
+                                ToolTip.Tip="Balanced thermal policy — BIOS manages fans normally under load" />
                         <Button Classes="secondary" Content="Gaming"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="gaming"
-                                ToolTip.Tip="Performance thermal profile" />
+                                ToolTip.Tip="Performance thermal policy — BIOS allows higher temps and ramps fans harder under load" />
                         <Button Classes="danger" Content="Max"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="max"
-                                ToolTip.Tip="Spin fans to full speed (pwm_enable=0)" />
+                                ToolTip.Tip="Immediately forces both fans to maximum speed (pwm_enable=0)" />
                     </StackPanel>
                     <TextBlock Classes="caption" Margin="0,8,0,0"
                                Text="{Binding ActiveFanProfile, StringFormat='Active: {0}'}" />
                 </StackPanel>
             </Border>
 
-            <!-- Preset Selection Card -->
-            <Border Classes="card" IsVisible="{Binding CanEditFanCurve}">
-                <StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="FAN" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" />
-                        <TextBlock Classes="sectionHeader" Text="Fan Presets" VerticalAlignment="Center" Margin="0" />
-                    </StackPanel>
-                    <TextBlock Classes="caption" Text="Quick presets for common usage scenarios" Margin="0,4,0,12" />
-                    
-                    <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
-                            <ComboBox ItemsSource="{Binding Presets}" 
-                                      SelectedItem="{Binding SelectedPreset}"
-                                      MinWidth="180" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                            <Button Classes="secondary" Content="Load Preset" 
-                                    Command="{Binding LoadPresetCommand}"
-                                    CommandParameter="{Binding SelectedPreset}" />
-                            <Button Classes="primary" Content="Save as Preset" 
-                                    Command="{Binding SavePresetCommand}" />
-                        </StackPanel>
-                    </Grid>
-                </StackPanel>
-            </Border>
-            
-            <!-- Custom Fan Curve Controls -->
-            <Border Classes="card" IsVisible="{Binding CanEditFanCurve}">
+            <!-- Smart Auto-Switch (profile-only and full-control boards) -->
+            <Border Classes="card" IsVisible="{Binding HasFanProfileAccess}">
                 <StackPanel>
                     <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="SET" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" />
-                            <TextBlock Classes="sectionHeader" Text="Custom Fan Curve" VerticalAlignment="Center" Margin="0" />
+                            <TextBlock Text="AUTO" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                            <TextBlock Classes="sectionHeader" Text="Smart Auto-Switch" VerticalAlignment="Center" Margin="0" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16">
-                            <ToggleSwitch IsChecked="{Binding IsCustomCurveEnabled}" 
-                                          OnContent="Enabled"
-                                          OffContent="Disabled" />
-                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" IsChecked="{Binding IsAutoSwitchEnabled}"
+                                      OnContent="On" OffContent="Off" />
                     </Grid>
-                    <TextBlock Classes="caption" Text="Apply curve targets once using the current CPU/GPU temperatures" Margin="0,4,0,0" />
-                    
-                    <!-- Curve Options -->
-                    <Border Background="#141414" CornerRadius="6" Padding="12" Margin="0,12,0,0">
-                        <StackPanel Orientation="Horizontal" Spacing="24">
-                            <ToggleSwitch IsChecked="{Binding LinkFans}"
-                                          OnContent="Linked Fans"
-                                          OffContent="Independent Fans" />
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Classes="label" Text="Hysteresis:" VerticalAlignment="Center" />
-                                <NumericUpDown Value="{Binding Hysteresis}" 
-                                               Minimum="0" Maximum="10"
-                                               Width="80" />
-                                <TextBlock Classes="label" Text="°C" VerticalAlignment="Center" />
-                            </StackPanel>
+                    <TextBlock Classes="caption" Margin="0,4,0,12"
+                               Text="Automatically switches fan profile based on CPU/GPU temperature. Uses the higher of CPU or GPU temp." />
+
+                    <Border Background="#141414" CornerRadius="6" Padding="16,12">
+                        <StackPanel Spacing="12">
+                            <!-- Balanced threshold -->
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <TextBlock Grid.Column="0" Classes="caption"
+                                           Text="Switch to Balanced above:" VerticalAlignment="Center" />
+                                <NumericUpDown Grid.Column="1"
+                                               Value="{Binding ThresholdBalanced}"
+                                               Minimum="50" Maximum="95" Increment="5"
+                                               MinWidth="120" FormatString="0" />
+                                <TextBlock Grid.Column="2" Text="°C" VerticalAlignment="Center" Margin="6,0,0,0" />
+                            </Grid>
+                            <!-- Gaming threshold -->
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <TextBlock Grid.Column="0" Classes="caption"
+                                           Text="Switch to Gaming above:" VerticalAlignment="Center" />
+                                <NumericUpDown Grid.Column="1"
+                                               Value="{Binding ThresholdPerformance}"
+                                               Minimum="60" Maximum="100" Increment="5"
+                                               MinWidth="120" FormatString="0" />
+                                <TextBlock Grid.Column="2" Text="°C" VerticalAlignment="Center" Margin="6,0,0,0" />
+                            </Grid>
+                            <!-- Hysteresis -->
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <TextBlock Grid.Column="0" Classes="caption"
+                                           Text="Hysteresis (dead-band):" VerticalAlignment="Center" />
+                                <NumericUpDown Grid.Column="1"
+                                               Value="{Binding AutoSwitchHysteresis}"
+                                               Minimum="0" Maximum="15" Increment="1"
+                                               MinWidth="120" FormatString="0" />
+                                <TextBlock Grid.Column="2" Text="°C" VerticalAlignment="Center" Margin="6,0,0,0" />
+                            </Grid>
+                            <TextBlock Classes="caption"
+                                       Text="Dead-band prevents flapping: profile only steps down once temp drops this many °C below threshold." />
                         </StackPanel>
                     </Border>
+                    <TextBlock Classes="caption" Margin="0,8,0,0"
+                               Text="{Binding ActiveFanProfile, StringFormat='Current profile: {0}'}" />
                 </StackPanel>
             </Border>
-            
-            <!-- Fan Curve Editor Grid -->
-            <Grid ColumnDefinitions="*,*" IsVisible="{Binding IsCurveEditorVisible}">
-                
-                <!-- CPU Fan Curve -->
-                <Border Classes="card" Grid.Column="0" Margin="0,0,8,0">
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                            <TextBlock Text="CPU" FontSize="12" FontWeight="Bold" Margin="0,0,8,0" />
-                            <TextBlock Classes="sectionHeader" Text="CPU Fan Curve" Margin="0" />
-                            <Button Classes="ghost" Content="+ Add Point" 
-                                    Command="{Binding AddCpuPointCommand}"
-                                    Margin="12,0,0,0" />
-                        </StackPanel>
-                        
-                        <ItemsControl ItemsSource="{Binding CpuFanCurve}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:FanCurvePointViewModel">
-                                    <Border Background="#1A1A1A" CornerRadius="6" Padding="12,10" Margin="0,4">
-                                        <Grid ColumnDefinitions="*,*,Auto">
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Classes="caption" Text="Temp (°C)" />
-                                                <NumericUpDown Value="{Binding Temperature}" 
-                                                               Minimum="30" Maximum="100"
-                                                               Increment="5"
-                                                               Margin="0,4,0,0" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" Margin="8,0">
-                                                <TextBlock Classes="caption" Text="Fan (%)" />
-                                                <NumericUpDown Value="{Binding FanSpeed}" 
-                                                               Minimum="0" Maximum="100"
-                                                               Increment="5"
-                                                               Margin="0,4,0,0" />
-                                            </StackPanel>
-                                            <Button Grid.Column="2" Classes="iconButton" Content="x"
-                                                    VerticalAlignment="Bottom"
-                                                    Command="{Binding $parent[ItemsControl].((vm:FanControlViewModel)DataContext).RemoveCpuPointCommand}"
-                                                    CommandParameter="{Binding}" />
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-                
-                <!-- GPU Fan Curve -->
-                <Border Classes="card" Grid.Column="1" Margin="8,0,0,0">
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                            <TextBlock Text="GPU" FontSize="12" FontWeight="Bold" Margin="0,0,8,0" />
-                            <TextBlock Classes="sectionHeader" Text="GPU Fan Curve" Margin="0" />
-                            <Button Classes="ghost" Content="+ Add Point" 
-                                    Command="{Binding AddGpuPointCommand}"
-                                    Margin="12,0,0,0" />
-                        </StackPanel>
-                        
-                        <ItemsControl ItemsSource="{Binding GpuFanCurve}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:FanCurvePointViewModel">
-                                    <Border Background="#1A1A1A" CornerRadius="6" Padding="12,10" Margin="0,4">
-                                        <Grid ColumnDefinitions="*,*,Auto">
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Classes="caption" Text="Temp (°C)" />
-                                                <NumericUpDown Value="{Binding Temperature}" 
-                                                               Minimum="30" Maximum="100"
-                                                               Increment="5"
-                                                               Margin="0,4,0,0" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" Margin="8,0">
-                                                <TextBlock Classes="caption" Text="Fan (%)" />
-                                                <NumericUpDown Value="{Binding FanSpeed}" 
-                                                               Minimum="0" Maximum="100"
-                                                               Increment="5"
-                                                               Margin="0,4,0,0" />
-                                            </StackPanel>
-                                            <Button Grid.Column="2" Classes="iconButton" Content="x"
-                                                    VerticalAlignment="Bottom"
-                                                    Command="{Binding $parent[ItemsControl].((vm:FanControlViewModel)DataContext).RemoveGpuPointCommand}"
-                                                    CommandParameter="{Binding}" />
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-            </Grid>
-            
+
             <!-- Status Message -->
-            <Border Classes="infoBanner" 
+            <Border Classes="infoBanner"
                     IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="ℹ️" FontSize="14" />
                     <TextBlock Text="{Binding StatusMessage}" />
                 </StackPanel>
             </Border>
-            
-            <!-- Action Buttons -->
-            <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
-                    <Button Classes="danger" Content="Emergency Stop" 
-                            Command="{Binding EmergencyStopCommand}"
-                        IsVisible="{Binding CanEditFanCurve}"
-                            ToolTip.Tip="Set fans to maximum speed immediately" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" IsVisible="{Binding CanEditFanCurve}">
-                    <Button Classes="secondary" Content="Reset to Default" 
-                            Command="{Binding ResetToDefaultCommand}" />
-                    <Button Classes="primary" Content="Apply Once" 
-                        Command="{Binding ApplyCurveCommand}"
-                        ToolTip.Tip="Sets fan speeds once from current temperatures. Speeds will not auto-track temperature changes." />
-                </StackPanel>
-            </Grid>
             
         </StackPanel>
     </ScrollViewer>

@@ -60,6 +60,9 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private bool _isSettingsActive;
 
+    [ObservableProperty]
+    private bool _isLongevityActive;
+
     // Renderer fallback banner shown when GPU rendering failed and software mode was auto-selected.
     [ObservableProperty]
     private bool _showRenderFallbackBanner;
@@ -100,6 +103,7 @@ public partial class MainWindowViewModel : ObservableObject
     public FanControlViewModel FanControlVm { get; }
     public SystemControlViewModel SystemControlVm { get; }
     public SettingsViewModel SettingsVm { get; }
+    public LongevityViewModel LongevityVm { get; }
 
     public MainWindowViewModel(
         IHardwareService hardwareService,
@@ -107,7 +111,8 @@ public partial class MainWindowViewModel : ObservableObject
         DashboardViewModel dashboardVm,
         FanControlViewModel fanControlVm,
         SystemControlViewModel systemControlVm,
-        SettingsViewModel settingsVm)
+        SettingsViewModel settingsVm,
+        LongevityViewModel longevityVm)
     {
         _hardwareService = hardwareService;
         _configService = configService;
@@ -115,6 +120,7 @@ public partial class MainWindowViewModel : ObservableObject
         FanControlVm = fanControlVm;
         SystemControlVm = systemControlVm;
         SettingsVm = settingsVm;
+        LongevityVm = longevityVm;
 
         CurrentView = DashboardVm;
         
@@ -167,6 +173,7 @@ public partial class MainWindowViewModel : ObservableObject
         IsDashboardActive = page == "Dashboard";
         IsFanControlActive = page == "Fan Control";
         IsSystemControlActive = page == "System Control";
+        IsLongevityActive = page == "Longevity";
         IsSettingsActive = page == "Settings";
     }
 
@@ -192,6 +199,14 @@ public partial class MainWindowViewModel : ObservableObject
         CurrentView = SystemControlVm;
         CurrentPage = "System Control";
         SetActiveNavigation("System Control");
+    }
+
+    [RelayCommand]
+    private void NavigateToLongevity()
+    {
+        CurrentView = LongevityVm;
+        CurrentPage = "Longevity";
+        SetActiveNavigation("Longevity");
     }
 
     [RelayCommand]

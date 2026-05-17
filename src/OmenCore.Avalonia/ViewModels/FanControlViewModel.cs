@@ -39,16 +39,11 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     private string _selectedPreset = "Balanced";
 
     [ObservableProperty]
-    private bool _linkFans = true;
-
-    [ObservableProperty]
-    private int _hysteresis = 3;
-
-    [ObservableProperty]
     private string _statusMessage = "";
 
+    // Defaults to false — set true only when capabilities confirm direct PWM control
     [ObservableProperty]
-    private bool _canEditFanCurve = true;
+    private bool _canEditFanCurve;
 
     [ObservableProperty]
     private bool _showCapabilityWarning;
@@ -61,6 +56,21 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private string _activeFanProfile = "auto";
+
+    // Smart Auto-Switch — temperature-driven profile switching for profile-only boards
+    [ObservableProperty]
+    private bool _isAutoSwitchEnabled;
+
+    [ObservableProperty]
+    private int _autoSwitchHysteresis = 3;
+
+    [ObservableProperty]
+    private int _thresholdBalanced = 70;   // °C: switch up to balanced above this
+
+    [ObservableProperty]
+    private int _thresholdPerformance = 85; // °C: switch up to performance above this
+
+    private string _autoSwitchCurrentProfile = string.Empty;
 
     public bool IsCurveEditorVisible => CanEditFanCurve && IsCustomCurveEnabled;
 
@@ -137,10 +147,42 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         GpuTemperature = Math.Round(status.GpuTemperature, 1);
         CpuFanRpm = status.CpuFanRpm;
         GpuFanRpm = status.GpuFanRpm;
-        
-        // Calculate current fan percentages (estimate based on RPM)
+
         CpuFanPercent = Math.Min(100, (int)(CpuFanRpm / 60.0));
         GpuFanPercent = Math.Min(100, (int)(GpuFanRpm / 60.0));
+
+        if (IsAutoSwitchEnabled && HasFanProfileAccess)
+            _ = RunAutoSwitchAsync(Math.Max(CpuTemperature, GpuTemperature));
+    }
+
+    private async Task RunAutoSwitchAsync(double maxTemp)
+    {
+        // Determine target profile from temperature with hysteresis dead-band
+        string target;
+        if (maxTemp >= ThresholdPerformance)
+            target = "gaming";
+        else if (maxTemp >= ThresholdBalanced)
+            target = "balanced";
+        else if (maxTemp < ThresholdBalanced - AutoSwitchHysteresis &&
+                 _autoSwitchCurrentProfile == "balanced")
+            target = "silent";
+        else if (maxTemp < ThresholdPerformance - AutoSwitchHysteresis &&
+                 _autoSwitchCurrentProfile == "gaming")
+            target = "balanced";
+        else
+            return; // Within dead-band — don't switch
+
+        if (target == _autoSwitchCurrentProfile)
+            return;
+
+        try
+        {
+            await _hardwareService.SetFanProfileAsync(target);
+            _autoSwitchCurrentProfile = target;
+            ActiveFanProfile = target;
+            StatusMessage = $"Auto-switched to {target} ({maxTemp:F0}°C)";
+        }
+        catch { }
     }
 
     partial void OnSelectedPresetChanged(string value)

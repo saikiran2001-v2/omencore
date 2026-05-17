@@ -164,6 +164,14 @@
                             </StackPanel>
                         </Button>
                         
+                        <Button Classes="navButton" Command="{Binding NavigateToLongevityCommand}"
+                                Classes.active="{Binding IsLongevityActive}">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="L" FontSize="13" FontWeight="Bold" Width="18" />
+                                <TextBlock Text="Longevity" VerticalAlignment="Center" FontSize="13" />
+                            </StackPanel>
+                        </Button>
+
                         <Button Classes="navButton" Command="{Binding NavigateToSettingsCommand}"
                                 Classes.active="{Binding IsSettingsActive}">
                             <StackPanel Orientation="Horizontal" Spacing="12">
@@ -204,6 +212,9 @@
                     </DataTemplate>
                     <DataTemplate DataType="{x:Type vm:SystemControlViewModel}">
                         <views:SystemControlView />
+                    </DataTemplate>
+                    <DataTemplate DataType="{x:Type vm:LongevityViewModel}">
+                        <views:LongevityView />
                     </DataTemplate>
                     <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
                         <views:SettingsView />

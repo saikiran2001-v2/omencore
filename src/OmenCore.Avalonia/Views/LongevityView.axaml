@@ -1,0 +1,230 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OmenCore.Avalonia.ViewModels"
+             x:Class="OmenCore.Avalonia.Views.LongevityView"
+             x:DataType="vm:LongevityViewModel">
+
+    <ScrollViewer>
+        <StackPanel Spacing="16">
+
+            <!-- Page Header -->
+            <StackPanel>
+                <TextBlock Classes="pageHeader" Text="Battery &amp; Longevity" />
+                <TextBlock Classes="label" Text="Extend battery lifespan and reduce thermal wear" Margin="0,4,0,0" />
+            </StackPanel>
+
+            <!-- Battery Health Card -->
+            <Border Classes="card">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="BAT" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Classes="sectionHeader" Text="Battery Health" VerticalAlignment="Center" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Classes="caption" Text="Measured from design capacity vs. current full-charge capacity" Margin="0,4,0,16" />
+
+                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" >
+                        <!-- Health % -->
+                        <Border Grid.Column="0" Grid.Row="0" Background="#141414" CornerRadius="6" Padding="16,12" Margin="0,0,8,0">
+                            <StackPanel>
+                                <TextBlock Classes="caption" Text="CAPACITY HEALTH" />
+                                <TextBlock Text="{Binding BatteryHealthPercent, StringFormat={}{0:F1}%}"
+                                           FontSize="28" FontWeight="Bold"
+                                           Foreground="{DynamicResource OmenBlueBrush}" Margin="0,4,0,2" />
+                                <TextBlock Text="{Binding BatteryHealthLabel}"
+                                           Classes="caption"
+                                           Foreground="{DynamicResource SecondaryTextBrush}" />
+                            </StackPanel>
+                        </Border>
+                        <!-- Cycle Count -->
+                        <Border Grid.Column="1" Grid.Row="0" Background="#141414" CornerRadius="6" Padding="16,12" Margin="8,0,0,0">
+                            <StackPanel>
+                                <TextBlock Classes="caption" Text="CHARGE CYCLES" />
+                                <TextBlock Text="{Binding BatteryCycleCount}"
+                                           FontSize="28" FontWeight="Bold"
+                                           Foreground="{DynamicResource OmenBlueBrush}" Margin="0,4,0,2" />
+                                <TextBlock Text="typical lifespan: ~500–1000"
+                                           Classes="caption"
+                                           Foreground="{DynamicResource TertiaryTextBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Longevity Presets Card -->
+            <Border Classes="card">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="PRE" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Classes="sectionHeader" Text="Longevity Presets" VerticalAlignment="Center" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Classes="caption" Margin="0,4,0,16"
+                               Text="One-click profiles tuned for battery and thermal longevity. Eco is best for daily use on AC or battery." />
+
+                    <Grid ColumnDefinitions="*,*,*">
+                        <Border Grid.Column="0" Classes="cardInteractive" Margin="0,0,6,0">
+                            <Button Classes="ghost" Command="{Binding ApplyEcoPresetCommand}"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <StackPanel HorizontalAlignment="Center" Spacing="4">
+                                    <TextBlock Text="ECO" FontSize="20" FontWeight="Bold"
+                                               HorizontalAlignment="Center"
+                                               Foreground="{DynamicResource OmenGreenBrush}" />
+                                    <TextBlock Text="Eco" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="Cool profile" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="15W CPU cap" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="80% charge limit" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Border>
+                        <Border Grid.Column="1" Classes="cardInteractive" Margin="3,0">
+                            <Button Classes="ghost" Command="{Binding ApplyBalancedPresetCommand}"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <StackPanel HorizontalAlignment="Center" Spacing="4">
+                                    <TextBlock Text="BAL" FontSize="20" FontWeight="Bold"
+                                               HorizontalAlignment="Center"
+                                               Foreground="{DynamicResource OmenBlueBrush}" />
+                                    <TextBlock Text="Balanced" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="Balanced profile" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="28W CPU cap" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="85% charge limit" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Border>
+                        <Border Grid.Column="2" Classes="cardInteractive" Margin="6,0,0,0">
+                            <Button Classes="ghost" Command="{Binding ApplyPerformancePresetCommand}"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <StackPanel HorizontalAlignment="Center" Spacing="4">
+                                    <TextBlock Text="PRF" FontSize="20" FontWeight="Bold"
+                                               HorizontalAlignment="Center"
+                                               Foreground="{DynamicResource OmenOrangeBrush}" />
+                                    <TextBlock Text="Performance" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="Performance profile" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="45W CPU cap" HorizontalAlignment="Center" />
+                                    <TextBlock Classes="caption" Text="No charge limit" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- CPU Power Limit Card -->
+            <Border Classes="card" IsVisible="{Binding SupportsCpuPowerLimit}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="CPU" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Classes="sectionHeader" Text="CPU Sustained Power Limit (PL1)" VerticalAlignment="Center" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Classes="caption" Margin="0,4,0,16"
+                               Text="Limits how much power the CPU draws continuously. Lower = cooler + longer battery life. Resets on reboot (apply preset for persistence)." />
+
+                    <Border Background="#141414" CornerRadius="6" Padding="16,12">
+                        <StackPanel>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="Sustained TDP" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding CpuPowerLimitWatts, StringFormat={}{0}W}"
+                                           Foreground="{DynamicResource OmenBlueBrush}" FontWeight="SemiBold" />
+                            </Grid>
+                            <Slider Value="{Binding CpuPowerLimitWatts}"
+                                    Minimum="{Binding CpuPowerLimitMin}"
+                                    Maximum="{Binding CpuPowerLimitMax}"
+                                    TickFrequency="5"
+                                    IsSnapToTickEnabled="True"
+                                    Margin="0,8,0,8" />
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <TextBlock Grid.Column="0" Classes="caption"
+                                           Text="{Binding CpuPowerLimitMin, StringFormat={}{0}W (min)}"
+                                           Foreground="{DynamicResource TertiaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Classes="caption"
+                                           Text="{Binding CpuPowerLimitMax, StringFormat={}{0}W (max)}"
+                                           Foreground="{DynamicResource TertiaryTextBrush}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Button Classes="primary" Content="Apply Power Limit"
+                            Command="{Binding ApplyCpuPowerLimitCommand}"
+                            HorizontalAlignment="Left" Margin="0,12,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- Charge Limit Card -->
+            <Border Classes="card">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="CHG" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Classes="sectionHeader" Text="Battery Charge Limit" VerticalAlignment="Center" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Classes="caption" Margin="0,4,0,16"
+                               Text="Stop charging at a lower percentage to reduce battery aging. 80% is optimal for daily AC use." />
+
+                    <!-- Sysfs-supported path -->
+                    <StackPanel IsVisible="{Binding SupportsChargeLimit}">
+                        <Border Background="#141414" CornerRadius="6" Padding="16,12">
+                            <StackPanel>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Text="Charge stop threshold" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding ChargeEndThreshold, StringFormat={}{0}%}"
+                                               Foreground="{DynamicResource OmenBlueBrush}" FontWeight="SemiBold" />
+                                </Grid>
+                                <Slider Value="{Binding ChargeEndThreshold}"
+                                        Minimum="60" Maximum="100"
+                                        TickFrequency="5"
+                                        IsSnapToTickEnabled="True"
+                                        Margin="0,8,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Button Classes="primary" Content="Apply Charge Limit"
+                                Command="{Binding ApplyChargeLimitCommand}"
+                                HorizontalAlignment="Left" Margin="0,12,0,0" />
+                    </StackPanel>
+
+                    <!-- BIOS fallback guidance -->
+                    <Border IsVisible="{Binding !SupportsChargeLimit}"
+                            Background="#141414" CornerRadius="6" Padding="16,12">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Charge limit not exposed via sysfs on this firmware."
+                                       FontWeight="SemiBold" />
+                            <TextBlock Classes="caption" TextWrapping="Wrap"
+                                       Text="Set it in BIOS instead:  F10 at boot → Advanced → Battery Care Mode → Enable, then set limit (80% recommended)." />
+                            <TextBlock Classes="caption" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TertiaryTextBrush}"
+                                       Text="Some HP OMEN models also support this via the HP Smart app on Windows — set once, the BIOS remembers it across OS reboots." />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Thermal Tips Card -->
+            <Border Classes="card">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="TIP" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Classes="sectionHeader" Text="Longevity Tips" VerticalAlignment="Center" Margin="0" />
+                    </StackPanel>
+                    <StackPanel Margin="0,12,0,0" Spacing="8">
+                        <TextBlock Classes="caption" TextWrapping="Wrap"
+                                   Text="• Keep CPU temps below 85°C sustained — use Eco or Balanced profile for daily work." />
+                        <TextBlock Classes="caption" TextWrapping="Wrap"
+                                   Text="• Avoid charging to 100% daily — set an 80% charge limit if you're usually on AC." />
+                        <TextBlock Classes="caption" TextWrapping="Wrap"
+                                   Text="• Let the battery discharge to ~20% occasionally to keep charge-cycle reporting accurate." />
+                        <TextBlock Classes="caption" TextWrapping="Wrap"
+                                   Text="• Ensure laptop vents are clear — blocked airflow causes thermal throttling and degrades components faster." />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Status Message -->
+            <Border Classes="infoBanner"
+                    IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="i" FontSize="14" FontWeight="Bold" />
+                    <TextBlock Text="{Binding StatusMessage}" />
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
