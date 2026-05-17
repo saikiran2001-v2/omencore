@@ -41,7 +41,7 @@ public class LinuxKeyboardController
     public bool HasZoneControl { get; }
     public bool HasFourZoneControl { get; }
     public bool IsPerKeyRgb { get; }
-    public bool SupportsBrightnessControl => File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness"));
+    public bool SupportsBrightnessControl => HasFourZoneControl || File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness"));
     public string KeyboardType => IsPerKeyRgb ? "Per-Key RGB" : "4-Zone";
     public int ZoneCount => IsPerKeyRgb ? 0 : 4;
 
@@ -165,7 +165,7 @@ public class LinuxKeyboardController
     }
     
     /// <summary>
-    /// Set keyboard backlight brightness (0-100).
+    /// Set keyboard backlight brightness (0-100) by scaling the current fourzone_color values.
     /// </summary>
     public bool SetBrightness(int percent)
     {
@@ -174,13 +174,33 @@ public class LinuxKeyboardController
 
         try
         {
+            // fourzone_color: scale each zone's RGB channels by the brightness factor
+            if (HasFourZoneControl)
+            {
+                var current = File.ReadAllText(FourZoneColorPath).Trim();
+                if (current.Length < 24)
+                    current = current.PadRight(24, '0');
+
+                double factor = Math.Clamp(percent, 0, 100) / 100.0;
+                var result = new System.Text.StringBuilder(24);
+                for (int i = 0; i < 4; i++)
+                {
+                    int r = Convert.ToInt32(current.Substring(i * 6 + 0, 2), 16);
+                    int g = Convert.ToInt32(current.Substring(i * 6 + 2, 2), 16);
+                    int b = Convert.ToInt32(current.Substring(i * 6 + 4, 2), 16);
+                    result.Append($"{(int)(r * factor):x2}{(int)(g * factor):x2}{(int)(b * factor):x2}");
+                }
+                File.WriteAllText(FourZoneColorPath, result.ToString());
+                return true;
+            }
+
             var brightnessPath = Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness");
             var maxBrightnessPath = Path.Combine(KEYBOARD_BACKLIGHT_PATH, "max_brightness");
 
             if (!File.Exists(brightnessPath))
                 return false;
 
-            int maxBrightness = 3; // Default for many HP laptops
+            int maxBrightness = 3;
             if (File.Exists(maxBrightnessPath))
             {
                 var maxContent = File.ReadAllText(maxBrightnessPath).Trim();
@@ -188,8 +208,7 @@ public class LinuxKeyboardController
                 if (maxBrightness == 0) maxBrightness = 3;
             }
 
-            var brightness = Math.Clamp(percent * maxBrightness / 100, 0, maxBrightness);
-            File.WriteAllText(brightnessPath, brightness.ToString());
+            File.WriteAllText(brightnessPath, Math.Clamp(percent * maxBrightness / 100, 0, maxBrightness).ToString());
             return true;
         }
         catch
@@ -201,15 +220,10 @@ public class LinuxKeyboardController
     public string GetBrightnessUnavailableReason()
     {
         if (!IsAvailable)
-        {
             return "HP WMI keyboard interface is not available.";
-        }
 
-        var brightnessPath = Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness");
-        if (!File.Exists(brightnessPath))
-        {
-            return $"Brightness sysfs path not found: {brightnessPath}";
-        }
+        if (!HasFourZoneControl && !File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness")))
+            return $"No supported brightness interface found (checked fourzone_color and {KEYBOARD_BACKLIGHT_PATH})";
 
         return "Unknown keyboard brightness error.";
     }

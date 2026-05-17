@@ -100,6 +100,15 @@ public static class KeyboardCommand
                 return;
             }
             
+            // Scale RGB by brightness if specified alongside --color
+            if (brightness.HasValue)
+            {
+                double factor = Math.Clamp(brightness.Value, 0, 100) / 100.0;
+                r = (byte)(r * factor);
+                g = (byte)(g * factor);
+                b = (byte)(b * factor);
+            }
+
             bool success;
             if (zone.HasValue)
             {
@@ -108,7 +117,7 @@ public static class KeyboardCommand
                 if (success)
                 {
                     Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"✓ Zone {zoneIndex} color set to: #{hexColor}");
+                    Console.WriteLine($"✓ Zone {zoneIndex} color set to: #{hexColor}{(brightness.HasValue ? $" @ {brightness.Value}%" : "")}");
                     Console.ResetColor();
                 }
             }
@@ -118,11 +127,11 @@ public static class KeyboardCommand
                 if (success)
                 {
                     Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"✓ All zones color set to: #{hexColor}");
+                    Console.WriteLine($"✓ All zones color set to: #{hexColor}{(brightness.HasValue ? $" @ {brightness.Value}%" : "")}");
                     Console.ResetColor();
                 }
             }
-            
+
             if (!success)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
