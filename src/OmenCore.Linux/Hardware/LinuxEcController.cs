@@ -47,6 +47,11 @@ public class LinuxEcController
     private string? _hwmonPwm2Path;
     private string? _hwmonFan1InputPath;
     private string? _hwmonFan2InputPath;
+
+    // Resolved at init time — handles kernel 6.13+ class-based API (/sys/class/platform-profile/<name>/)
+    // as well as older /sys/firmware/acpi/platform_profile path
+    private string? _resolvedAcpiProfilePath;
+    private string? _resolvedAcpiProfileChoicesPath;
     
     // DMI paths for model detection
     private const string DMI_PRODUCT_NAME = "/sys/class/dmi/id/product_name";
@@ -126,8 +131,11 @@ public class LinuxEcController
             File.Exists(HP_WMI_FAN1) ||
             File.Exists(HP_WMI_FAN2));
         
-        // ACPI platform profile (kernel 5.18+, used by 2025+ models)
-        HasAcpiProfileAccess = File.Exists(ACPI_PLATFORM_PROFILE);
+        // ACPI platform profile — resolve dynamically to support kernel 6.13+ class-based API
+        // (/sys/class/platform-profile/<name>/profile) as well as older /sys/firmware/acpi path
+        _resolvedAcpiProfilePath = LinuxSysfsPathMap.ResolveThermalProfilePath();
+        _resolvedAcpiProfileChoicesPath = LinuxSysfsPathMap.ResolveThermalProfileChoicesPath();
+        HasAcpiProfileAccess = _resolvedAcpiProfilePath != null;
         
         // Discover hp-wmi hwmon interface (pwm control for 2025+ models)
         DiscoverHwmonFanControl();
@@ -590,6 +598,18 @@ public class LinuxEcController
     /// </summary>
     public string[] GetAcpiProfileChoices()
     {
+        // Try the dynamically resolved choices path first (handles kernel 6.13+ class-based API)
+        if (_resolvedAcpiProfileChoicesPath != null)
+        {
+            try
+            {
+                var content = File.ReadAllText(_resolvedAcpiProfileChoicesPath).Trim();
+                var items = content.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (items.Length > 0) return items;
+            }
+            catch { }
+        }
+
         var choicePaths = new[]
         {
             ACPI_PLATFORM_PROFILE_CHOICES,
@@ -624,12 +644,12 @@ public class LinuxEcController
     /// </summary>
     public string? GetAcpiProfile()
     {
-        if (!HasAcpiProfileAccess)
+        if (!HasAcpiProfileAccess || _resolvedAcpiProfilePath == null)
             return null;
-        
+
         try
         {
-            return File.ReadAllText(ACPI_PLATFORM_PROFILE).Trim();
+            return File.ReadAllText(_resolvedAcpiProfilePath).Trim();
         }
         catch { return null; }
     }
@@ -640,9 +660,9 @@ public class LinuxEcController
     /// </summary>
     public bool SetAcpiProfile(string profile)
     {
-        if (!HasAcpiProfileAccess)
+        if (!HasAcpiProfileAccess || _resolvedAcpiProfilePath == null)
             return false;
-        
+
         try
         {
             var normalized = profile.Trim().ToLowerInvariant();
@@ -655,7 +675,7 @@ public class LinuxEcController
             if (choices.Length > 0 && !choices.Contains(normalized, StringComparer.OrdinalIgnoreCase))
                 return false;
 
-            File.WriteAllText(ACPI_PLATFORM_PROFILE, normalized);
+            File.WriteAllText(_resolvedAcpiProfilePath, normalized);
             return true;
         }
         catch { return false; }
@@ -690,6 +710,12 @@ public class LinuxEcController
             choices.Contains("quiet", StringComparer.OrdinalIgnoreCase))
         {
             return "quiet";
+        }
+
+        if (requested.Equals("low-power", StringComparison.OrdinalIgnoreCase) &&
+            choices.Contains("cool", StringComparer.OrdinalIgnoreCase))
+        {
+            return "cool";
         }
 
         return requested;

@@ -164,34 +164,59 @@
                                 ToolTip.Tip="White" />
                     </WrapPanel>
                     
-                    <!-- Custom Color (when RGB supported) -->
+                    <!-- 4-Zone RGB Color Controls -->
                     <StackPanel IsVisible="{Binding HasFourZoneRgb}" Margin="0,16,0,0">
-                        <TextBlock Classes="subsectionHeader" Text="Custom RGB Color" Margin="0,0,0,8" />
-                        <Border Background="#141414" CornerRadius="6" Padding="16,12">
-                            <Grid ColumnDefinitions="*,*,*,Auto">
-                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                    <TextBlock Classes="caption" Text="Red" Margin="0,0,0,4" />
-                                    <NumericUpDown Value="{Binding KeyboardRed}" Minimum="0" Maximum="255" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" Margin="4,0">
-                                    <TextBlock Classes="caption" Text="Green" Margin="0,0,0,4" />
-                                    <NumericUpDown Value="{Binding KeyboardGreen}" Minimum="0" Maximum="255" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="2" Margin="8,0">
-                                    <TextBlock Classes="caption" Text="Blue" Margin="0,0,0,4" />
-                                    <NumericUpDown Value="{Binding KeyboardBlue}" Minimum="0" Maximum="255" />
-                                </StackPanel>
-                                <Button Grid.Column="3" Classes="primary" Content="Apply"
-                                        Command="{Binding ApplyKeyboardColorCommand}"
-                                        VerticalAlignment="Bottom" Margin="8,0,0,0" />
-                            </Grid>
-                        </Border>
-                        
-                        <!-- Color Preview -->
-                        <TextBlock Classes="caption" Text="Preview" Margin="0,12,0,4" />
-                        <Border Height="40" CornerRadius="6"
-                                Background="{DynamicResource OmenBlueBrush}" 
-                                Name="ColorPreviewBorder" />
+                        <TextBlock Classes="subsectionHeader" Text="4-Zone RGB Colors" Margin="0,0,0,4" />
+                        <TextBlock Classes="caption" Margin="0,0,0,10"
+                                   Text="Set R/G/B per zone then click Apply. Brightness slider scales all zones proportionally." />
+                        <ItemsControl ItemsSource="{Binding ZoneColors}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ZoneColorViewModel">
+                                    <Border Background="#141414" CornerRadius="6" Padding="10">
+                                        <StackPanel MinWidth="90">
+                                            <TextBlock Classes="caption" Text="{Binding Name}"
+                                                       HorizontalAlignment="Center" Margin="0,0,0,6" />
+                                            <!-- Live color preview -->
+                                            <Border Height="28" CornerRadius="4"
+                                                    Background="{Binding PreviewBrush}"
+                                                    Margin="0,0,0,8" />
+                                            <!-- R channel -->
+                                            <Grid ColumnDefinitions="14,*">
+                                                <TextBlock Grid.Column="0" Classes="caption" Text="R"
+                                                           VerticalAlignment="Center" Foreground="#FF6666" />
+                                                <NumericUpDown Grid.Column="1" Value="{Binding R}"
+                                                               Minimum="0" Maximum="255" Increment="1"
+                                                               FormatString="0" />
+                                            </Grid>
+                                            <!-- G channel -->
+                                            <Grid ColumnDefinitions="14,*" Margin="0,4,0,0">
+                                                <TextBlock Grid.Column="0" Classes="caption" Text="G"
+                                                           VerticalAlignment="Center" Foreground="#66FF66" />
+                                                <NumericUpDown Grid.Column="1" Value="{Binding G}"
+                                                               Minimum="0" Maximum="255" Increment="1"
+                                                               FormatString="0" />
+                                            </Grid>
+                                            <!-- B channel -->
+                                            <Grid ColumnDefinitions="14,*" Margin="0,4,0,0">
+                                                <TextBlock Grid.Column="0" Classes="caption" Text="B"
+                                                           VerticalAlignment="Center" Foreground="#6699FF" />
+                                                <NumericUpDown Grid.Column="1" Value="{Binding B}"
+                                                               Minimum="0" Maximum="255" Increment="1"
+                                                               FormatString="0" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button Classes="primary" Content="Apply All Zones"
+                                Command="{Binding ApplyKeyboardColorCommand}"
+                                HorizontalAlignment="Left" Margin="0,12,0,0" />
                     </StackPanel>
                 </StackPanel>
             </Border>

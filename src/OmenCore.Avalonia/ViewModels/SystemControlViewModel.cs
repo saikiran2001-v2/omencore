@@ -1,8 +1,50 @@
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OmenCore.Avalonia.Services;
 
 namespace OmenCore.Avalonia.ViewModels;
+
+/// <summary>
+/// Per-zone color state with live preview brush.
+/// </summary>
+public partial class ZoneColorViewModel : ObservableObject
+{
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PreviewBrush))]
+    private int _r;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PreviewBrush))]
+    private int _g;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PreviewBrush))]
+    private int _b;
+
+    public string Name { get; }
+
+    public IBrush PreviewBrush => new SolidColorBrush(
+        Color.FromRgb(
+            (byte)Math.Clamp(R, 0, 255),
+            (byte)Math.Clamp(G, 0, 255),
+            (byte)Math.Clamp(B, 0, 255)));
+
+    public ZoneColorViewModel(string name, byte r = 0, byte g = 191, byte b = 255)
+    {
+        Name = name;
+        _r = r;
+        _g = g;
+        _b = b;
+    }
+
+    public void SetColor(byte r, byte g, byte b)
+    {
+        R = r;
+        G = g;
+        B = b;
+    }
+}
 
 /// <summary>
 /// System control ViewModel for performance modes, GPU switching, and keyboard lighting.
@@ -46,15 +88,6 @@ public partial class SystemControlViewModel : ObservableObject
     private int _keyboardBrightness = 100;
 
     [ObservableProperty]
-    private byte _keyboardRed = 0;
-
-    [ObservableProperty]
-    private byte _keyboardGreen = 191;
-
-    [ObservableProperty]
-    private byte _keyboardBlue = 255;
-
-    [ObservableProperty]
     private bool _hasFourZoneRgb;
 
     // Status
@@ -63,6 +96,18 @@ public partial class SystemControlViewModel : ObservableObject
 
     public string[] PerformanceModes { get; } = { "Quiet", "Balanced", "Performance" };
     public string[] GpuModes { get; } = { "Hybrid", "Discrete", "Integrated" };
+
+    /// <summary>
+    /// Per-zone base colors. Brightness scaling is applied on write so
+    /// these always store the full-brightness target, not the hardware value.
+    /// </summary>
+    public ZoneColorViewModel[] ZoneColors { get; } =
+    {
+        new("Zone 1"),
+        new("Zone 2"),
+        new("Zone 3"),
+        new("Zone 4"),
+    };
 
     public SystemControlViewModel(IHardwareService hardwareService)
     {
@@ -192,24 +237,47 @@ public partial class SystemControlViewModel : ObservableObject
 
     partial void OnKeyboardBrightnessChanged(int value)
     {
-        _ = ApplyKeyboardBrightnessAsync();
+        _ = ApplyLightingAsync();
     }
 
-    private async Task ApplyKeyboardBrightnessAsync()
+    /// <summary>
+    /// Unified lighting write — always composites zone base colors with current brightness.
+    /// This fixes the previous bug where SetAllZonesColor (full brightness) and
+    /// SetBrightness (read-and-scale in sysfs) composed incorrectly.
+    /// </summary>
+    private async Task ApplyLightingAsync()
     {
-        if (!_canSetKeyboardBrightness)
-        {
-            StatusMessage = _keyboardBrightnessReason;
-            return;
-        }
+        double factor = Math.Clamp(KeyboardBrightness, 0, 100) / 100.0;
 
-        try
+        if (HasFourZoneRgb)
         {
-            await _hardwareService.SetKeyboardBrightnessAsync(KeyboardBrightness);
+            for (int i = 0; i < ZoneColors.Length; i++)
+            {
+                var zone = ZoneColors[i];
+                byte r = (byte)(Math.Clamp(zone.R, 0, 255) * factor);
+                byte g = (byte)(Math.Clamp(zone.G, 0, 255) * factor);
+                byte b = (byte)(Math.Clamp(zone.B, 0, 255) * factor);
+                try
+                {
+                    await _hardwareService.SetKeyboardZoneColorAsync(i, r, g, b);
+                }
+                catch (Exception ex)
+                {
+                    StatusMessage = $"Zone {i + 1} error: {ex.Message}";
+                    return;
+                }
+            }
         }
-        catch (Exception ex)
+        else if (_canSetKeyboardBrightness)
         {
-            StatusMessage = $"Brightness error: {ex.Message}";
+            try
+            {
+                await _hardwareService.SetKeyboardBrightnessAsync(KeyboardBrightness);
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Brightness error: {ex.Message}";
+            }
         }
     }
 
@@ -218,8 +286,8 @@ public partial class SystemControlViewModel : ObservableObject
     {
         try
         {
-            await _hardwareService.SetKeyboardColorAsync(KeyboardRed, KeyboardGreen, KeyboardBlue);
-            StatusMessage = $"Keyboard color set to RGB({KeyboardRed}, {KeyboardGreen}, {KeyboardBlue})";
+            await ApplyLightingAsync();
+            StatusMessage = "Keyboard lighting applied";
         }
         catch (Exception ex)
         {
@@ -230,20 +298,23 @@ public partial class SystemControlViewModel : ObservableObject
     [RelayCommand]
     private void SetPresetColor(string colorName)
     {
-        (KeyboardRed, KeyboardGreen, KeyboardBlue) = colorName.ToLower() switch
+        (byte r, byte g, byte b) = colorName.ToLower() switch
         {
-            "blue" => ((byte)0, (byte)191, (byte)255),
-            "red" => ((byte)227, (byte)24, (byte)55),
-            "green" => ((byte)57, (byte)255, (byte)20),
-            "purple" => ((byte)157, (byte)78, (byte)221),
+            "blue"   => ((byte)0,   (byte)191, (byte)255),
+            "red"    => ((byte)227, (byte)24,  (byte)55),
+            "green"  => ((byte)57,  (byte)255, (byte)20),
+            "purple" => ((byte)157, (byte)78,  (byte)221),
             "orange" => ((byte)255, (byte)107, (byte)53),
-            "white" => ((byte)255, (byte)255, (byte)255),
-            "cyan" => ((byte)0, (byte)255, (byte)255),
+            "white"  => ((byte)255, (byte)255, (byte)255),
+            "cyan"   => ((byte)0,   (byte)255, (byte)255),
             "yellow" => ((byte)255, (byte)255, (byte)0),
-            _ => ((byte)0, (byte)191, (byte)255)
+            _        => ((byte)0,   (byte)191, (byte)255)
         };
 
-        _ = ApplyKeyboardColor();
+        foreach (var zone in ZoneColors)
+            zone.SetColor(r, g, b);
+
+        _ = ApplyLightingAsync();
     }
 
     private static bool TryParsePerformanceModeName(string modeName, out PerformanceMode mode)

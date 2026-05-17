@@ -107,14 +107,24 @@ public interface IHardwareService
     Task SetGpuModeAsync(string mode);
     
     /// <summary>
+    /// Sets fan profile (auto/silent/balanced/gaming/max).
+    /// </summary>
+    Task SetFanProfileAsync(string profile);
+
+    /// <summary>
     /// Sets keyboard backlight brightness (0-100).
     /// </summary>
     Task SetKeyboardBrightnessAsync(int brightness);
     
     /// <summary>
-    /// Sets keyboard color.
+    /// Sets keyboard color for all zones.
     /// </summary>
     Task SetKeyboardColorAsync(byte r, byte g, byte b);
+
+    /// <summary>
+    /// Sets keyboard color for a specific zone (0-3).
+    /// </summary>
+    Task SetKeyboardZoneColorAsync(int zone, byte r, byte g, byte b);
     
     /// <summary>
     /// Event raised when hardware status changes.

@@ -128,6 +128,24 @@ public class LinuxKeyboardController
     }
 
     /// <summary>
+    /// Set all 4 zones to individual colors in a single sysfs write (fourzone only).
+    /// </summary>
+    public bool SetAllZoneColors(byte r0, byte g0, byte b0,
+                                  byte r1, byte g1, byte b1,
+                                  byte r2, byte g2, byte b2,
+                                  byte r3, byte g3, byte b3)
+    {
+        if (!HasFourZoneControl) return false;
+        try
+        {
+            var hex = $"{r0:x2}{g0:x2}{b0:x2}{r1:x2}{g1:x2}{b1:x2}{r2:x2}{g2:x2}{b2:x2}{r3:x2}{g3:x2}{b3:x2}";
+            File.WriteAllText(FourZoneColorPath, hex);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
     /// Set the same color for all zones.
     /// </summary>
     public bool SetAllZonesColor(byte r, byte g, byte b)

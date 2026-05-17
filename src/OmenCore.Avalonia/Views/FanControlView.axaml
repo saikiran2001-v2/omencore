@@ -57,6 +57,37 @@
                 </Border>
             </Grid>
             
+            <!-- Fan Profile Control (shown for profile-only and full-control systems) -->
+            <Border Classes="card" IsVisible="{Binding HasFanProfileAccess}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="FAN" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Classes="sectionHeader" Text="Fan Profiles" VerticalAlignment="Center" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Classes="caption" Margin="0,4,0,12"
+                               Text="Auto = BIOS control · Silent = cool profile · Balanced = balanced profile · Gaming = performance profile · Max = full speed" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Classes="secondary" Content="Auto"
+                                Command="{Binding SetFanProfileCommand}" CommandParameter="auto"
+                                ToolTip.Tip="Return fans to BIOS automatic control" />
+                        <Button Classes="secondary" Content="Silent"
+                                Command="{Binding SetFanProfileCommand}" CommandParameter="silent"
+                                ToolTip.Tip="Low-power / quiet thermal profile" />
+                        <Button Classes="secondary" Content="Balanced"
+                                Command="{Binding SetFanProfileCommand}" CommandParameter="balanced"
+                                ToolTip.Tip="Balanced thermal profile" />
+                        <Button Classes="secondary" Content="Gaming"
+                                Command="{Binding SetFanProfileCommand}" CommandParameter="gaming"
+                                ToolTip.Tip="Performance thermal profile" />
+                        <Button Classes="danger" Content="Max"
+                                Command="{Binding SetFanProfileCommand}" CommandParameter="max"
+                                ToolTip.Tip="Spin fans to full speed (pwm_enable=0)" />
+                    </StackPanel>
+                    <TextBlock Classes="caption" Margin="0,8,0,0"
+                               Text="{Binding ActiveFanProfile, StringFormat='Active: {0}'}" />
+                </StackPanel>
+            </Border>
+
             <!-- Preset Selection Card -->
             <Border Classes="card" IsVisible="{Binding CanEditFanCurve}">
                 <StackPanel>

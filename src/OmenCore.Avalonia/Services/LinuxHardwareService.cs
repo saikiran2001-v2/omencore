@@ -643,6 +643,27 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         return exitCode == 0;
     }
 
+    public async Task SetFanProfileAsync(string profile)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return;
+
+        await ExecuteWithIoLockAsync(() =>
+        {
+            var ec = new OmenCore.Linux.Hardware.LinuxEcController();
+            var fanProfile = profile.Trim().ToLowerInvariant() switch
+            {
+                "silent"   => OmenCore.Linux.Hardware.FanProfile.Silent,
+                "balanced" => OmenCore.Linux.Hardware.FanProfile.Balanced,
+                "gaming"   => OmenCore.Linux.Hardware.FanProfile.Gaming,
+                "max"      => OmenCore.Linux.Hardware.FanProfile.Max,
+                _          => OmenCore.Linux.Hardware.FanProfile.Auto
+            };
+            ec.SetFanProfile(fanProfile);
+            return Task.CompletedTask;
+        });
+    }
+
     public async Task SetCpuFanSpeedAsync(int percentage)
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
@@ -800,6 +821,22 @@ public class LinuxHardwareService : IHardwareService, IDisposable
                 throw new NotSupportedException("Keyboard RGB interface is not available on this kernel/board.");
             if (!ctrl.SetAllZonesColor(r, g, b))
                 throw new InvalidOperationException("Failed to set keyboard color.");
+            return Task.CompletedTask;
+        });
+    }
+
+    public async Task SetKeyboardZoneColorAsync(int zone, byte r, byte g, byte b)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return;
+
+        await ExecuteWithIoLockAsync(() =>
+        {
+            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+            if (!ctrl.IsAvailable)
+                throw new NotSupportedException("Keyboard RGB interface is not available on this kernel/board.");
+            if (!ctrl.SetZoneColor(zone, r, g, b))
+                throw new InvalidOperationException($"Failed to set keyboard zone {zone} color.");
             return Task.CompletedTask;
         });
     }

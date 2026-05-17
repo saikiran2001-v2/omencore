@@ -56,6 +56,12 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _capabilityWarningMessage = "";
 
+    [ObservableProperty]
+    private bool _hasFanProfileAccess;
+
+    [ObservableProperty]
+    private string _activeFanProfile = "auto";
+
     public bool IsCurveEditorVisible => CanEditFanCurve && IsCustomCurveEnabled;
 
     public ObservableCollection<string> Presets { get; } = new();
@@ -96,11 +102,12 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
             CanEditFanCurve = capabilities.SupportsFanControl;
 
             var capabilityClass = capabilities.FanControlCapabilityClass?.Trim().ToLowerInvariant() ?? "unsupported-control";
+            HasFanProfileAccess = capabilityClass is "profile-only" or "full-control";
             switch (capabilityClass)
             {
                 case "profile-only":
-                    ShowCapabilityWarning = true;
-                    CapabilityWarningMessage = "This Linux system exposes thermal profiles but not direct fan-speed targets. Use System Control performance profiles for cooling behavior.";
+                    ShowCapabilityWarning = false;
+                    CapabilityWarningMessage = string.Empty;
                     break;
                 case "telemetry-only":
                     ShowCapabilityWarning = true;
@@ -247,6 +254,22 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             StatusMessage = $"Failed to save preset: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetFanProfile(string profile)
+    {
+        try
+        {
+            await _hardwareService.SetFanProfileAsync(profile);
+            ActiveFanProfile = profile;
+            StatusMessage = $"Fan profile set to {profile}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to set fan profile: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"SetFanProfile failed: {ex.Message}");
         }
     }
 
