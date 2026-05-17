@@ -15,6 +15,7 @@ public class LinuxKeyboardController
     private const string HP_WMI_PATH = "/sys/devices/platform/hp-wmi";
     private const string KEYBOARD_BACKLIGHT_PATH = "/sys/class/leds/hp::kbd_backlight";
     private const string DMI_PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name";
+    private const string FOURZONE_COLOR_PATH_NAME = "fourzone_color";
     
     /// <summary>
     /// Model substrings known to have per-key RGB keyboards.
@@ -38,14 +39,18 @@ public class LinuxKeyboardController
     
     public bool IsAvailable { get; }
     public bool HasZoneControl { get; }
+    public bool HasFourZoneControl { get; }
     public bool IsPerKeyRgb { get; }
     public bool SupportsBrightnessControl => File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness"));
     public string KeyboardType => IsPerKeyRgb ? "Per-Key RGB" : "4-Zone";
     public int ZoneCount => IsPerKeyRgb ? 0 : 4;
-    
+
+    private string FourZoneColorPath => Path.Combine(HP_WMI_PATH, FOURZONE_COLOR_PATH_NAME);
+
     public LinuxKeyboardController()
     {
-        IsAvailable = Directory.Exists(HP_WMI_PATH) || Directory.Exists(KEYBOARD_BACKLIGHT_PATH);
+        HasFourZoneControl = File.Exists(Path.Combine(HP_WMI_PATH, FOURZONE_COLOR_PATH_NAME));
+        IsAvailable = Directory.Exists(HP_WMI_PATH) || Directory.Exists(KEYBOARD_BACKLIGHT_PATH) || HasFourZoneControl;
         HasZoneControl = File.Exists(Path.Combine(HP_WMI_PATH, "keyboard_zones"));
         IsPerKeyRgb = DetectPerKeyRgb();
     }
@@ -78,35 +83,42 @@ public class LinuxKeyboardController
     {
         if (!IsAvailable || zone < 0 || zone > 3)
             return false;
-            
+
         try
         {
-            // HP OMEN keyboard lighting is complex - zones may be controlled via WMI
-            // This implementation uses a simplified approach based on available interfaces
-            
-            // Try HP WMI zone control (if available)
+            // fourzone_color: single file with all 4 zones as RRGGBBRRGGBBRRGGBBRRGGBB
+            if (HasFourZoneControl)
+            {
+                var current = File.ReadAllText(FourZoneColorPath).Trim();
+                // Pad/truncate to exactly 24 chars (4 zones × 6 hex chars)
+                if (current.Length < 24)
+                    current = current.PadRight(24, '0');
+                var chars = current.ToCharArray();
+                var hex = $"{r:x2}{g:x2}{b:x2}";
+                hex.CopyTo(0, chars, zone * 6, 6);
+                File.WriteAllText(FourZoneColorPath, new string(chars));
+                return true;
+            }
+
+            // Legacy: per-zone files (keyboard_zones + zone{n}_color)
             if (HasZoneControl)
             {
                 var zonePath = Path.Combine(HP_WMI_PATH, $"zone{zone}_color");
                 if (File.Exists(zonePath))
                 {
-                    var colorValue = $"{r:X2}{g:X2}{b:X2}";
-                    File.WriteAllText(zonePath, colorValue);
+                    File.WriteAllText(zonePath, $"{r:X2}{g:X2}{b:X2}");
                     return true;
                 }
             }
-            
-            // Alternative: Use keyboard backlight brightness as a proxy
-            // This doesn't support full RGB but provides basic control
+
+            // Fallback: brightness-only control
             var brightnessPath = Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness");
             if (File.Exists(brightnessPath))
             {
-                // Calculate brightness from RGB (0-255 average)
-                var brightness = (r + g + b) / 3;
-                File.WriteAllText(brightnessPath, brightness.ToString());
+                File.WriteAllText(brightnessPath, ((r + g + b) / 3).ToString());
                 return true;
             }
-            
+
             return false;
         }
         catch
@@ -114,7 +126,7 @@ public class LinuxKeyboardController
             return false;
         }
     }
-    
+
     /// <summary>
     /// Set the same color for all zones.
     /// </summary>
@@ -122,21 +134,33 @@ public class LinuxKeyboardController
     {
         if (!IsAvailable)
             return false;
-            
-        // Try setting each zone
+
+        // fourzone_color: write all 4 zones in one atomic write
+        if (HasFourZoneControl)
+        {
+            try
+            {
+                var hex = $"{r:x2}{g:x2}{b:x2}";
+                File.WriteAllText(FourZoneColorPath, string.Concat(hex, hex, hex, hex));
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // Legacy: per-zone files
         bool anySuccess = false;
         for (int i = 0; i < 4; i++)
         {
             if (SetZoneColor(i, r, g, b))
                 anySuccess = true;
         }
-        
-        // If zone control didn't work, try global brightness
+
         if (!anySuccess)
-        {
             return SetBrightness((r + g + b) / 3 * 100 / 255);
-        }
-        
+
         return anySuccess;
     }
     
