@@ -12,8 +12,13 @@ public static class LinuxSysfsPathMap
     public const string AcpiPlatformProfileChoicesPath = "/sys/firmware/acpi/platform_profile_choices";
     public const string KeyboardBacklightPath = "/sys/class/leds/hp::kbd_backlight";
 
+    // Kernel 6.13+ registers platform profiles under /sys/class/platform-profile/<name>/profile
+    // The device name is assigned by the kernel and may vary ("hp-wmi", "platform-profile-0", etc.)
+    // Older kernels use /sys/firmware/acpi/platform_profile (single global node)
     public static readonly string[] ThermalProfilePaths =
     {
+        "/sys/class/platform-profile/hp-wmi/profile",
+        "/sys/class/platform-profile/platform-profile-0/profile",
         "/sys/firmware/acpi/platform_profile",
         "/sys/devices/platform/hp-wmi/thermal_profile",
         "/sys/devices/platform/hp-wmi/thermal-profile",
@@ -25,6 +30,8 @@ public static class LinuxSysfsPathMap
 
     public static readonly string[] ThermalProfileChoicePaths =
     {
+        "/sys/class/platform-profile/hp-wmi/choices",
+        "/sys/class/platform-profile/platform-profile-0/choices",
         "/sys/firmware/acpi/platform_profile_choices",
         "/sys/devices/platform/hp-wmi/platform_profile_choices",
         "/sys/devices/platform/hp-wmi/platform-profile-choices",
@@ -34,12 +41,16 @@ public static class LinuxSysfsPathMap
 
     public static readonly string[] PlatformProfilePaths =
     {
+        "/sys/class/platform-profile/hp-wmi/profile",
+        "/sys/class/platform-profile/platform-profile-0/profile",
         "/sys/devices/platform/hp-wmi/platform_profile",
         "/sys/devices/platform/hp-wmi/platform-profile"
     };
 
     public static readonly string[] HpWmiThermalProfilePaths =
     {
+        "/sys/class/platform-profile/hp-wmi/profile",
+        "/sys/class/platform-profile/platform-profile-0/profile",
         "/sys/devices/platform/hp-wmi/thermal_profile",
         "/sys/devices/platform/hp-wmi/thermal-profile"
     };
@@ -69,9 +80,51 @@ public static class LinuxSysfsPathMap
         return null;
     }
 
-    public static string? ResolveThermalProfilePath() => ResolveFirstExistingFile(ThermalProfilePaths);
+    public static string? ResolveThermalProfilePath()
+    {
+        // First check known static paths
+        var known = ResolveFirstExistingFile(ThermalProfilePaths);
+        if (known != null) return known;
 
-    public static string? ResolveThermalProfileChoicesPath() => ResolveFirstExistingFile(ThermalProfileChoicePaths);
+        // Scan /sys/class/platform-profile/ for any registered handler (kernel 6.13+ API)
+        const string profileClassRoot = "/sys/class/platform-profile";
+        try
+        {
+            if (Directory.Exists(profileClassRoot))
+            {
+                foreach (var dir in Directory.EnumerateDirectories(profileClassRoot))
+                {
+                    var profileFile = Path.Combine(dir, "profile");
+                    if (File.Exists(profileFile)) return profileFile;
+                }
+            }
+        }
+        catch { }
+
+        return null;
+    }
+
+    public static string? ResolveThermalProfileChoicesPath()
+    {
+        var known = ResolveFirstExistingFile(ThermalProfileChoicePaths);
+        if (known != null) return known;
+
+        const string profileClassRoot = "/sys/class/platform-profile";
+        try
+        {
+            if (Directory.Exists(profileClassRoot))
+            {
+                foreach (var dir in Directory.EnumerateDirectories(profileClassRoot))
+                {
+                    var choicesFile = Path.Combine(dir, "choices");
+                    if (File.Exists(choicesFile)) return choicesFile;
+                }
+            }
+        }
+        catch { }
+
+        return null;
+    }
 
     public static bool AnyPathExists(IEnumerable<string> candidates) => candidates.Any(File.Exists);
 

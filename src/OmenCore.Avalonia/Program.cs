@@ -57,10 +57,19 @@ internal sealed class Program
             .WithInterFont()
             .LogToTrace();
 
+    private static bool IsWaylandSession()
+    {
+        var sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE");
+        var waylandDisplay = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY");
+        return string.Equals(sessionType, "wayland", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(waylandDisplay);
+    }
+
     private static X11PlatformOptions GetLinuxX11PlatformOptions()
     {
-        if (!OperatingSystem.IsLinux())
+        if (!OperatingSystem.IsLinux() || IsWaylandSession())
         {
+            // On Wayland let UsePlatformDetect() pick the backend without X11 overrides.
             return new X11PlatformOptions();
         }
 
@@ -131,27 +140,18 @@ internal sealed class Program
         }
         catch (Exception ex) when (ShouldRetryWithAlternateDisplay(ex) && TryApplyAlternateDisplay(out var switchedDisplay))
         {
-            Console.Error.WriteLine($"OmenCore: X11 display initialization failed, retrying with DISPLAY={switchedDisplay}.");
-            Environment.SetEnvironmentVariable(DisplayRetryEnvVar, "1");
-
-            BuildAvaloniaApp()
-                .StartWithClassicDesktopLifetime(args);
-
-            RecordRendererStartupSuccess(initialMode);
+            // Avalonia's AppBuilder is a static singleton — cannot reinitialize in-process.
+            // Re-exec with the new DISPLAY so the next process starts clean.
+            RecordRendererStartupFailure(ex, initialMode);
+            Console.Error.WriteLine($"OmenCore: X11 display initialization failed, restarting with DISPLAY={switchedDisplay}.");
+            RestartWithEnv(args, (DisplayRetryEnvVar, "1"), ("DISPLAY", switchedDisplay));
             return;
         }
         catch (Exception ex) when (ShouldRetryWithSoftware(ex, initialMode))
         {
             RecordRendererStartupFailure(ex, initialMode);
-
-            Console.Error.WriteLine("OmenCore: renderer initialization failed, retrying with software mode.");
-            Environment.SetEnvironmentVariable(RenderModeEnvVar, "software");
-            Environment.SetEnvironmentVariable(RenderRetryEnvVar, "1");
-
-            BuildAvaloniaApp()
-                .StartWithClassicDesktopLifetime(args);
-
-            RecordRendererStartupSuccess("software");
+            Console.Error.WriteLine("OmenCore: renderer initialization failed, restarting with software mode.");
+            RestartWithEnv(args, (RenderModeEnvVar, "software"), (RenderRetryEnvVar, "1"));
             return;
         }
         catch (Exception ex)
@@ -159,6 +159,35 @@ internal sealed class Program
             RecordRendererStartupFailure(ex, initialMode);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Re-exec this binary with extra environment variables set.
+    /// Used for renderer/display retries — Avalonia can't be re-initialized in the same process.
+    /// </summary>
+    private static void RestartWithEnv(string[] args, params (string key, string value)[] extraEnv)
+    {
+        var exe = Environment.ProcessPath
+            ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+        if (string.IsNullOrWhiteSpace(exe))
+        {
+            throw new InvalidOperationException("Cannot determine process path for restart.");
+        }
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = exe,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+        foreach (var (key, value) in extraEnv)
+            psi.Environment[key] = value;
+
+        var child = System.Diagnostics.Process.Start(psi);
+        child?.WaitForExit();
+        if (child != null)
+            Environment.ExitCode = child.ExitCode;
     }
 
     private static bool ShouldRetryWithSoftware(Exception ex, string initialMode)

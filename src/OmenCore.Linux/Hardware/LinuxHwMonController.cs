@@ -60,13 +60,13 @@ public class LinuxHwMonController
                     
                 var name = File.ReadAllText(namePath).Trim().ToLower();
                 
-                // CPU temperature sensors (in priority order)
-                if (name.Contains("coretemp") || name.Contains("k10temp") || 
-                    name.Contains("zenpower") || name.Contains("amd_energy") ||
-                    name.Contains("thinkpad") || name.Contains("hp") ||
-                    name.Contains("acpitz"))
+                // CPU temperature sensors — only genuine CPU package sensors.
+                // Exclude generic ACPI thermal zones (acpitz) which lag and can
+                // misreport, and HP WMI hwmon (hp) which has no temp files.
+                if (name == "coretemp" || name == "k10temp" || name == "zenpower" ||
+                    name == "amd_energy" || name.Contains("thinkpad"))
                 {
-                    AddCpuSensorPaths(hwmonDir);
+                    AddCpuSensorPaths(hwmonDir, preferPackageSensor: name == "coretemp");
                 }
                 
                 // GPU temperature sensors (in priority order)
@@ -100,9 +100,9 @@ public class LinuxHwMonController
                     
                 var type = File.ReadAllText(typePath).Trim().ToLower();
                 
-                // CPU-related thermal zones
-                if (type.Contains("x86_pkg") || type.Contains("acpitz") || 
-                    type.Contains("cpu") || type.Contains("soc"))
+                // CPU-related thermal zones — only high-fidelity package sensors.
+                // Skip "acpitz" and generic ACPI zones (they lag and are imprecise).
+                if (type.Contains("x86_pkg"))
                 {
                     if (!_cpuSensorPaths.Contains(tempPath))
                         _cpuSensorPaths.Add(tempPath);
@@ -119,9 +119,42 @@ public class LinuxHwMonController
         }
     }
     
-    private void AddCpuSensorPaths(string hwmonDir)
+    private void AddCpuSensorPaths(string hwmonDir, bool preferPackageSensor = false)
     {
-        // Try temp files in priority order
+        if (preferPackageSensor)
+        {
+            // For Intel coretemp: find the "Package id 0" sensor (highest priority)
+            // then fall back to any other temp_input files
+            string? packagePath = null;
+            var allTempInputs = new List<string>();
+
+            try
+            {
+                foreach (var tempFile in Directory.GetFiles(hwmonDir, "temp*_input"))
+                {
+                    allTempInputs.Add(tempFile);
+                    var labelFile = tempFile.Replace("_input", "_label");
+                    if (File.Exists(labelFile))
+                    {
+                        var label = File.ReadAllText(labelFile).Trim();
+                        if (label.StartsWith("Package", StringComparison.OrdinalIgnoreCase) && packagePath == null)
+                            packagePath = tempFile;
+                    }
+                }
+            }
+            catch { }
+
+            if (packagePath != null && !_cpuSensorPaths.Contains(packagePath))
+                _cpuSensorPaths.Add(packagePath);
+
+            // Add remaining sensors as fallbacks
+            foreach (var p in allTempInputs.Where(p => p != packagePath && !_cpuSensorPaths.Contains(p)))
+                _cpuSensorPaths.Add(p);
+
+            return;
+        }
+
+        // Default: add temp1_input, temp2_input, temp3_input
         foreach (var suffix in new[] { "temp1_input", "temp2_input", "temp3_input" })
         {
             var path = Path.Combine(hwmonDir, suffix);

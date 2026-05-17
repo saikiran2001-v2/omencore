@@ -155,27 +155,40 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         if (_capabilities != null)
             return _capabilities;
 
-        _capabilities = new SystemCapabilities();
+        var pending = new SystemCapabilities();
+        try
+        {
+            await PopulateCapabilitiesAsync(pending);
+            _capabilities = pending;
+        }
+        catch
+        {
+            // Don't cache a half-initialised object — let the next call retry.
+        }
+        return _capabilities ?? pending;
+    }
+
+    private async Task PopulateCapabilitiesAsync(SystemCapabilities cap)
+    {
+        var _capabilities = cap; // local alias so the body below compiles unchanged
 
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
-            // Mock capabilities for testing
-            return new SystemCapabilities
-            {
-                HasKeyboardBacklight = true,
-                HasFourZoneRgb = true,
-                HasDiscreteGpu = true,
-                HasGpuMuxSwitch = true,
-                SupportsFanControl = true,
-                SupportsFanSurface = true,
-                SupportsPerformanceProfiles = true,
-                SupportsKeyboardBrightness = true,
-                FanControlCapabilityClass = "full-control",
-                FanControlCapabilityReason = "Mock environment reports full control.",
-                ModelName = "HP OMEN 16 (Mock)",
-                CpuName = "AMD Ryzen 9 7945HX",
-                GpuName = "NVIDIA GeForce RTX 4070"
-            };
+            // Mock capabilities for testing on non-Linux
+            cap.HasKeyboardBacklight = true;
+            cap.HasFourZoneRgb = true;
+            cap.HasDiscreteGpu = true;
+            cap.HasGpuMuxSwitch = true;
+            cap.SupportsFanControl = true;
+            cap.SupportsFanSurface = true;
+            cap.SupportsPerformanceProfiles = true;
+            cap.SupportsKeyboardBrightness = true;
+            cap.FanControlCapabilityClass = "full-control";
+            cap.FanControlCapabilityReason = "Mock environment reports full control.";
+            cap.ModelName = "HP OMEN 16 (Mock)";
+            cap.CpuName = "AMD Ryzen 9 7945HX";
+            cap.GpuName = "NVIDIA GeForce RTX 4070";
+            return;
         }
 
         // Check for HP OMEN thermal/profile interfaces using centralized path normalization.
@@ -212,31 +225,29 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         _capabilities.FanControlCapabilityClass = capabilityAssessment.CapabilityKey;
         _capabilities.FanControlCapabilityReason = capabilityAssessment.Reason;
         
-        // Check keyboard backlight and writable brightness endpoint.
-        _capabilities.HasKeyboardBacklight = Directory.Exists(BACKLIGHT_PATH);
-        var keyboardBrightnessPath = Path.Combine(BACKLIGHT_PATH, "brightness");
-        _capabilities.SupportsKeyboardBrightness = _capabilities.HasKeyboardBacklight && File.Exists(keyboardBrightnessPath);
+        // Keyboard: check both legacy hp::kbd_backlight and the fourzone_color interface
+        var kbCtrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+        _capabilities.HasKeyboardBacklight = kbCtrl.IsAvailable;
+        _capabilities.SupportsKeyboardBrightness = kbCtrl.SupportsBrightnessControl;
         _capabilities.KeyboardBrightnessReason = _capabilities.SupportsKeyboardBrightness
             ? string.Empty
             : "Keyboard brightness sysfs path was not detected on this kernel/board.";
-        
-        // Detect RGB capabilities from common HP OMEN LED interfaces.
-        _capabilities.HasFourZoneRgb = DetectFourZoneRgbSupport();
-        _capabilities.HasPerKeyRgb = DetectPerKeyRgbSupport();
-        
+
+        // Detect RGB capabilities — include fourzone_color for newer OMEN models
+        _capabilities.HasFourZoneRgb = kbCtrl.HasFourZoneControl || DetectFourZoneRgbSupport();
+        _capabilities.HasPerKeyRgb = kbCtrl.IsPerKeyRgb || DetectPerKeyRgbSupport();
+
         // Check for discrete GPU
         _capabilities.HasDiscreteGpu = await HasDiscreteGpuAsync();
-        
+
         // Read model name from DMI
         _capabilities.ModelName = await ReadDmiStringAsync("product_name") ?? "Unknown HP OMEN";
-        
+
         // Read CPU name from /proc/cpuinfo
         _capabilities.CpuName = await ReadCpuNameAsync();
-        
+
         // Read GPU name
         _capabilities.GpuName = await ReadGpuNameAsync();
-
-        return _capabilities;
     }
 
     private static bool DetectFourZoneRgbSupport()
@@ -766,28 +777,14 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             return;
 
-        await ExecuteWithIoLockAsync(async () =>
+        await ExecuteWithIoLockAsync(() =>
         {
-            var maxPath = Path.Combine(BACKLIGHT_PATH, "max_brightness");
-            var brightnessPath = Path.Combine(BACKLIGHT_PATH, "brightness");
-
-            if (!File.Exists(brightnessPath))
-            {
-                throw new NotSupportedException("Keyboard brightness control is not exposed by this Linux kernel/board path.");
-            }
-
-            try
-            {
-                var maxBrightness = File.Exists(maxPath)
-                    ? int.Parse(await File.ReadAllTextAsync(maxPath))
-                    : 3;
-                var scaledBrightness = (int)(brightness / 100.0 * maxBrightness);
-                await File.WriteAllTextAsync(brightnessPath, scaledBrightness.ToString());
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Failed to set keyboard brightness: {ex.Message}");
-            }
+            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+            if (!ctrl.SupportsBrightnessControl)
+                throw new NotSupportedException("Keyboard brightness control is not available on this kernel/board.");
+            if (!ctrl.SetBrightness(brightness))
+                throw new InvalidOperationException("Failed to set keyboard brightness.");
+            return Task.CompletedTask;
         });
     }
 
@@ -796,29 +793,14 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             return;
 
-        await ExecuteWithIoLockAsync(async () =>
+        await ExecuteWithIoLockAsync(() =>
         {
-            var multiIntensityPath = Path.Combine(BACKLIGHT_PATH, "multi_intensity");
-            var colorPath = Path.Combine(BACKLIGHT_PATH, "color");
-
-            try
-            {
-                // Preferred for hp-wmi multicolor interface (used by custom driver): "R G B"
-                if (File.Exists(multiIntensityPath))
-                {
-                    var rgbSpace = $"{r} {g} {b}";
-                    await File.WriteAllTextAsync(multiIntensityPath, rgbSpace);
-                    return;
-                }
-
-                // Legacy fallback used by some keyboard backlight drivers.
-                var colorValue = $"{r:X2}{g:X2}{b:X2}";
-                await File.WriteAllTextAsync(colorPath, colorValue);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Failed to set keyboard color: {ex.Message}");
-            }
+            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+            if (!ctrl.IsAvailable)
+                throw new NotSupportedException("Keyboard RGB interface is not available on this kernel/board.");
+            if (!ctrl.SetAllZonesColor(r, g, b))
+                throw new InvalidOperationException("Failed to set keyboard color.");
+            return Task.CompletedTask;
         });
     }
 
@@ -904,6 +886,27 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         return null;
     }
 
+    private static async Task<int> ReadCoretempackageTemp(string hwmonDir)
+    {
+        try
+        {
+            foreach (var tempFile in Directory.GetFiles(hwmonDir, "temp*_input"))
+            {
+                var labelFile = tempFile.Replace("_input", "_label");
+                if (!File.Exists(labelFile)) continue;
+                var label = (await File.ReadAllTextAsync(labelFile)).Trim();
+                if (label.StartsWith("Package", StringComparison.OrdinalIgnoreCase))
+                {
+                    var tempStr = await File.ReadAllTextAsync(tempFile);
+                    if (int.TryParse(tempStr.Trim(), out var temp) && temp > 0)
+                        return temp;
+                }
+            }
+        }
+        catch { }
+        return 0;
+    }
+
     private static async Task<int> ReadTemperatureAsync(string type)
     {
         try
@@ -925,7 +928,14 @@ public class LinuxHardwareService : IHardwareService, IDisposable
                     
                     if (isCpuSensor || name == type)
                     {
-                        // Try different temperature input patterns
+                        // For Intel coretemp: prefer "Package id 0" over individual cores
+                        if (name == "coretemp")
+                        {
+                            var packageTemp = await ReadCoretempackageTemp(hwmon);
+                            if (packageTemp > 0) return packageTemp;
+                        }
+
+                        // AMD / fallback: try common temp file names
                         var tempFiles = new[] { "temp1_input", "temp2_input", "temp3_input", "Tctl" };
                         foreach (var tempFile in tempFiles)
                         {
@@ -971,7 +981,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             {
                 var namePath = Path.Combine(hwmon, "name");
                 if (!File.Exists(namePath)) continue;
-                
+
                 var name = (await File.ReadAllTextAsync(namePath)).Trim().ToLower();
                 if (name == "amdgpu" ||
                     name == "nouveau" ||
@@ -996,6 +1006,16 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             }
             catch { }
         }
+
+        // Fallback: read GPU temperature from EC register 0xB7 (HP OMEN hybrid GPU path)
+        try
+        {
+            var ec = new OmenCore.Linux.Hardware.LinuxEcController();
+            var ecTemp = ec.GetGpuTemperature();
+            if (ecTemp.HasValue && ecTemp.Value > 0)
+                return ecTemp.Value * 1000; // EC returns °C, callers expect millidegrees
+        }
+        catch { }
 
         return 0;
     }
