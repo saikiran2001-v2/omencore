@@ -92,3 +92,4 @@ publish/
 test-build/
 test-build2/
 test-build3/
+build.sh
