@@ -6,29 +6,50 @@ using OmenCore.Avalonia.Services;
 namespace OmenCore.Avalonia.ViewModels;
 
 /// <summary>
-/// Per-zone color state with live preview brush.
+/// Per-zone color state. Exposes a Color property for ColorPicker binding
+/// and R/G/B ints for manual input fallback.
 /// </summary>
 public partial class ZoneColorViewModel : ObservableObject
 {
+    private bool _suppressColorSync;
+
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Color))]
     [NotifyPropertyChangedFor(nameof(PreviewBrush))]
     private int _r;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Color))]
     [NotifyPropertyChangedFor(nameof(PreviewBrush))]
     private int _g;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Color))]
     [NotifyPropertyChangedFor(nameof(PreviewBrush))]
     private int _b;
 
     public string Name { get; }
 
-    public IBrush PreviewBrush => new SolidColorBrush(
-        Color.FromRgb(
-            (byte)Math.Clamp(R, 0, 255),
-            (byte)Math.Clamp(G, 0, 255),
-            (byte)Math.Clamp(B, 0, 255)));
+    /// <summary>
+    /// Avalonia.Media.Color bridging R/G/B — binds directly to ColorPicker.
+    /// </summary>
+    public Color Color
+    {
+        get => Color.FromRgb((byte)Math.Clamp(R, 0, 255), (byte)Math.Clamp(G, 0, 255), (byte)Math.Clamp(B, 0, 255));
+        set
+        {
+            if (_suppressColorSync) return;
+            _suppressColorSync = true;
+            R = value.R;
+            G = value.G;
+            B = value.B;
+            _suppressColorSync = false;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PreviewBrush));
+        }
+    }
+
+    public IBrush PreviewBrush => new SolidColorBrush(Color);
 
     public ZoneColorViewModel(string name, byte r = 0, byte g = 191, byte b = 255)
     {
@@ -40,9 +61,13 @@ public partial class ZoneColorViewModel : ObservableObject
 
     public void SetColor(byte r, byte g, byte b)
     {
+        _suppressColorSync = true;
         R = r;
         G = g;
         B = b;
+        _suppressColorSync = false;
+        OnPropertyChanged(nameof(Color));
+        OnPropertyChanged(nameof(PreviewBrush));
     }
 }
 

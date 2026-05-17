@@ -31,6 +31,10 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     };
     
     private string? _resolvedThermalPath; // Cached resolved path
+
+    // RAPL power tracking — store last reading to compute delta without sleeping
+    private long _raplLastEnergyUj;
+    private DateTime _raplLastReadTime = DateTime.MinValue;
     
     public event EventHandler<HardwareStatus>? StatusChanged;
 
@@ -117,6 +121,9 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
             // Read battery status
             (status.BatteryPercentage, status.IsOnBattery) = await ReadBatteryStatusAsync();
+
+            // Read power consumption (RAPL on Intel, power_now fallback)
+            status.PowerConsumption = await ReadPowerConsumptionAsync();
 
             return status;
         });
@@ -1200,6 +1207,55 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         }
         catch { }
         return (100, false);
+    }
+
+    private async Task<double> ReadPowerConsumptionAsync()
+    {
+        // Intel RAPL: delta between successive calls — no sleep needed since we poll every ~2.5s
+        const string raplPath = "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj";
+        try
+        {
+            if (File.Exists(raplPath))
+            {
+                var raw = await File.ReadAllTextAsync(raplPath);
+                if (long.TryParse(raw.Trim(), out var energyUj))
+                {
+                    var now = DateTime.UtcNow;
+                    if (_raplLastReadTime != DateTime.MinValue && energyUj >= _raplLastEnergyUj)
+                    {
+                        var elapsedUs = (now - _raplLastReadTime).TotalSeconds * 1_000_000.0;
+                        if (elapsedUs > 0)
+                        {
+                            var watts = Math.Round((energyUj - _raplLastEnergyUj) / elapsedUs, 1);
+                            _raplLastEnergyUj = energyUj;
+                            _raplLastReadTime = now;
+                            return watts;
+                        }
+                    }
+                    _raplLastEnergyUj = energyUj;
+                    _raplLastReadTime = now;
+                }
+            }
+        }
+        catch { }
+
+        // Fallback: battery power_now (µW → W) when on battery
+        try
+        {
+            foreach (var bat in Directory.GetDirectories(POWER_SUPPLY))
+            {
+                var typeFile = Path.Combine(bat, "type");
+                var powerFile = Path.Combine(bat, "power_now");
+                if (!File.Exists(typeFile) || !File.Exists(powerFile)) continue;
+                var type = (await File.ReadAllTextAsync(typeFile)).Trim();
+                if (type != "Battery") continue;
+                var powerRaw = (await File.ReadAllTextAsync(powerFile)).Trim();
+                if (long.TryParse(powerRaw, out var uw))
+                    return Math.Round(uw / 1_000_000.0, 1);
+            }
+        }
+        catch { }
+        return 0;
     }
 
     private static async Task<bool> HasDiscreteGpuAsync()
