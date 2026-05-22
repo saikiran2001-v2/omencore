@@ -110,7 +110,7 @@ public interface IHardwareService
     Task SetGpuModeAsync(string mode);
 
     /// <summary>
-    /// Sets fan profile (auto/silent/balanced/gaming/max).
+    /// Sets fan profile (auto/silent/balanced/gaming/constant/max).
     /// </summary>
     Task SetFanProfileAsync(string profile);
 

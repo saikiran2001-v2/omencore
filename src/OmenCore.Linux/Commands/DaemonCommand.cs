@@ -208,6 +208,7 @@ RestartSec=5
 User=root
 Environment=HOME=/root
 Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/tmp/omencore
+Environment=TMPDIR=/var/tmp/omencore
 
 # Security hardening
 ProtectSystem=strict

@@ -76,9 +76,6 @@ public partial class LongevityViewModel : ObservableObject
         StatusMessage = "Applying Eco preset...";
         try
         {
-            // Platform profile → cool (quietest/lowest power)
-            await _hardwareService.SetPerformanceModeAsync(PerformanceMode.Quiet);
-
             // CPU PL1 → 15W sustained
             if (SupportsCpuPowerLimit)
             {
@@ -93,7 +90,7 @@ public partial class LongevityViewModel : ObservableObject
                 await _hardwareService.SetChargeEndThresholdAsync(80);
             }
 
-            StatusMessage = "Eco preset applied — cool profile, 15W CPU cap, 80% charge limit";
+            StatusMessage = "Eco preset applied — 15W CPU cap, 80% charge limit";
         }
         catch (Exception ex)
         {
@@ -107,8 +104,6 @@ public partial class LongevityViewModel : ObservableObject
         StatusMessage = "Applying Balanced preset...";
         try
         {
-            await _hardwareService.SetPerformanceModeAsync(PerformanceMode.Balanced);
-
             if (SupportsCpuPowerLimit)
             {
                 CpuPowerLimitWatts = 28;
@@ -121,7 +116,7 @@ public partial class LongevityViewModel : ObservableObject
                 await _hardwareService.SetChargeEndThresholdAsync(85);
             }
 
-            StatusMessage = "Balanced preset applied — balanced profile, 28W CPU cap";
+            StatusMessage = "Balanced preset applied — 28W CPU cap, 85% charge limit";
         }
         catch (Exception ex)
         {
@@ -135,15 +130,13 @@ public partial class LongevityViewModel : ObservableObject
         StatusMessage = "Applying Performance preset...";
         try
         {
-            await _hardwareService.SetPerformanceModeAsync(PerformanceMode.Performance);
-
             if (SupportsCpuPowerLimit)
             {
                 CpuPowerLimitWatts = 45;
                 await _hardwareService.SetCpuPowerLimitAsync(45);
             }
 
-            StatusMessage = "Performance preset applied — unrestricted thermal, 45W CPU cap";
+            StatusMessage = "Performance preset applied — 45W CPU cap";
         }
         catch (Exception ex)
         {

@@ -15,6 +15,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     private bool _disposed;
     private bool _pollingInProgress;
     private PerformanceMode? _lastFanFallbackMode;
+    private OmenCore.Linux.Hardware.FanProfile _activeFanProfile = OmenCore.Linux.Hardware.FanProfile.Auto;
 
     // HP OMEN specific paths
     private const string HP_WMI_PATH = LinuxSysfsPathMap.HpWmiRoot;
@@ -55,19 +56,17 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         };
         _pollingTimer.Start();
 
-        // On boards with the patched hp-wmi driver (e.g. 8D40), writing pwm1_enable=2
-        // triggers the fan-stop code path so the EC can spin fans down to 0 RPM at idle.
-        // Best-effort: silently skipped if not root or path not present.
+        // Best-effort re-apply of the selected profile at startup.
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            _ = Task.Run(InitFanStop);
+            _ = Task.Run(() => ReapplyFanProfile(_activeFanProfile));
     }
 
-    private static void InitFanStop()
+    private static void ReapplyFanProfile(OmenCore.Linux.Hardware.FanProfile profile)
     {
         try
         {
             var ec = new OmenCore.Linux.Hardware.LinuxEcController();
-            ec.SetFanProfile(OmenCore.Linux.Hardware.FanProfile.Auto);
+            ec.SetFanProfile(profile);
         }
         catch { }
     }
@@ -694,9 +693,11 @@ public class LinuxHardwareService : IHardwareService, IDisposable
                 "balanced" => OmenCore.Linux.Hardware.FanProfile.Balanced,
                 "gaming"   => OmenCore.Linux.Hardware.FanProfile.Gaming,
                 "max"      => OmenCore.Linux.Hardware.FanProfile.Max,
+                "constant" => OmenCore.Linux.Hardware.FanProfile.Constant,
                 _          => OmenCore.Linux.Hardware.FanProfile.Auto
             };
             ec.SetFanProfile(fanProfile);
+            _activeFanProfile = fanProfile;
             return Task.CompletedTask;
         });
     }

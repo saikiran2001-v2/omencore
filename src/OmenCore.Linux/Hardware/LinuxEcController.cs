@@ -242,7 +242,10 @@ public class LinuxEcController
     /// Discover hp-wmi hwmon fan control paths.
     /// 2025+ OMEN models expose fan control via standard hwmon interface:
     ///   /sys/devices/platform/hp-wmi/hwmon/hwmonN/pwm1_enable
-    ///   0 = full speed, 1 = manual, 2 = auto (BIOS), 3 = fan off
+    ///   0 = full speed, 2 = auto (BIOS), 3 = fan off
+    ///   1 = board-specific:
+    ///       - manual PWM mode when pwm1/pwm2 files exist (Victus-S style)
+    ///       - fan-stop/user-defined mode on boards exposing only pwm*_enable
     /// </summary>
     private void DiscoverHwmonFanControl()
     {
@@ -839,38 +842,6 @@ public class LinuxEcController
         }
     }
 
-    // Cached result of whether pwm_enable=1 is accepted by this board's driver.
-    // null = not yet tested, true = supported, false = rejected (EINVAL on write).
-    private bool? _pwmMode1Supported;
-
-    /// <summary>
-    /// Attempt to engage pwm_enable=1 on boards that have no pwm1 target file.
-    /// Some hp-wmi driver revisions treat value 1 as a "boost" preset even without
-    /// an explicit pwm1 target. Reads back immediately to confirm the value stuck.
-    /// Result is cached — if the driver rejected it once we skip all future retries.
-    /// </summary>
-    private bool TryHwmonPwmMode1()
-    {
-        if (_hwmonPwm1EnablePath == null || _pwmMode1Supported == false)
-            return false;
-
-        try
-        {
-            File.WriteAllText(_hwmonPwm1EnablePath, "1");
-            if (_hwmonPwm2EnablePath != null)
-                File.WriteAllText(_hwmonPwm2EnablePath, "1");
-
-            var readBack = File.ReadAllText(_hwmonPwm1EnablePath).Trim();
-            _pwmMode1Supported = readBack == "1";
-            return _pwmMode1Supported.Value;
-        }
-        catch
-        {
-            _pwmMode1Supported = false;
-            return false;
-        }
-    }
-
     /// <summary>
     /// Get current hwmon pwm_enable value.
     /// </summary>
@@ -1052,7 +1023,7 @@ public class LinuxEcController
             
         return profile switch
         {
-            FanProfile.Auto => RestoreAutoMode(),
+            FanProfile.Auto or FanProfile.Constant => RestoreAutoMode(),
             FanProfile.Silent => SetManualFanSpeed(30),
             FanProfile.Balanced => SetManualFanSpeed(50),
             FanProfile.Gaming => SetManualFanSpeed(80),
@@ -1068,9 +1039,9 @@ public class LinuxEcController
     {
         var profileValue = profile switch
         {
-            FanProfile.Auto => "balanced",
+            FanProfile.Auto or FanProfile.Constant => "balanced",
             FanProfile.Silent => "quiet",
-            FanProfile.Balanced => "balanced", 
+            FanProfile.Balanced => "balanced",
             FanProfile.Gaming => "performance",
             FanProfile.Max => "performance",
             _ => "balanced"
@@ -1122,7 +1093,7 @@ public class LinuxEcController
         {
             var acpiProfile = profile switch
             {
-                FanProfile.Auto     => "balanced",
+                FanProfile.Auto or FanProfile.Constant => "balanced",
                 FanProfile.Silent   => "low-power",
                 FanProfile.Balanced => "balanced",
                 FanProfile.Gaming   => "performance",
@@ -1141,18 +1112,16 @@ public class LinuxEcController
                     success = SetHwmonPwmEnable(0) || success;
                     break;
 
+                case FanProfile.Constant:
+                    // BIOS auto — fans run continuously, never stopped by fan-stop logic
+                    success = SetHwmonPwmEnable(2) || success;
+                    break;
+
                 case FanProfile.Gaming:
                     // Priority order:
                     // 1. If pwm1 file exists: manual mode at 60%
-                    // 2. If only pwm1_enable exists: try value=1 (some hp-wmi revisions interpret
-                    //    this as a "boost" preset even without an explicit pwm1 target).
-                    //    Read back to confirm it wasn't silently reverted; fall to auto if it was.
-                    // 3. BIOS auto with performance platform profile
+                    // 2. Otherwise use BIOS auto with performance platform profile
                     if (SetHwmonManualPwm(60))
-                    {
-                        success = true;
-                    }
-                    else if (_hwmonPwm1Path == null && TryHwmonPwmMode1())
                     {
                         success = true;
                     }
@@ -1478,7 +1447,8 @@ public enum FanProfile
     Silent,
     Balanced,
     Gaming,
-    Max
+    Max,
+    Constant  // BIOS auto, fans never allowed to stop (no fan-stop)
 }
 
 public enum PerformanceMode

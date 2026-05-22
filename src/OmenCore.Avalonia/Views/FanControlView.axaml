@@ -65,81 +65,20 @@
                         <TextBlock Classes="sectionHeader" Text="Fan Profiles" VerticalAlignment="Center" Margin="0" />
                     </StackPanel>
                     <TextBlock Classes="caption" Margin="0,4,0,12"
-                               Text="Silent / Balanced / Gaming apply a BIOS thermal policy — fan difference is visible under CPU/GPU load, not at idle. Max forces immediate full speed." />
+                               Text="Auto and Constant keep BIOS fan control. Max forces immediate full speed. No temperature-based profile switching is applied by OmenCore." />
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button Classes="secondary" Content="Auto"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="auto"
                                 ToolTip.Tip="BIOS manages fans with balanced thermal policy" />
-                        <Button Classes="secondary" Content="Silent"
-                                Command="{Binding SetFanProfileCommand}" CommandParameter="silent"
-                                ToolTip.Tip="Cool/low-power thermal policy — BIOS runs fans quieter under load" />
-                        <Button Classes="secondary" Content="Balanced"
-                                Command="{Binding SetFanProfileCommand}" CommandParameter="balanced"
-                                ToolTip.Tip="Balanced thermal policy — BIOS manages fans normally under load" />
-                        <Button Classes="secondary" Content="Gaming"
-                                Command="{Binding SetFanProfileCommand}" CommandParameter="gaming"
-                                ToolTip.Tip="Performance thermal policy — BIOS allows higher temps and ramps fans harder under load" />
+                        <Button Classes="secondary" Content="Constant"
+                                Command="{Binding SetFanProfileCommand}" CommandParameter="constant"
+                                ToolTip.Tip="Always BIOS auto (no fan-stop logic) for users who want continuous fan activity" />
                         <Button Classes="danger" Content="Max"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="max"
                                 ToolTip.Tip="Immediately forces both fans to maximum speed (pwm_enable=0)" />
                     </StackPanel>
                     <TextBlock Classes="caption" Margin="0,8,0,0"
                                Text="{Binding ActiveFanProfile, StringFormat='Active: {0}'}" />
-                </StackPanel>
-            </Border>
-
-            <!-- Smart Auto-Switch (profile-only and full-control boards) -->
-            <Border Classes="card" IsVisible="{Binding HasFanProfileAccess}">
-                <StackPanel>
-                    <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="AUTO" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
-                            <TextBlock Classes="sectionHeader" Text="Smart Auto-Switch" VerticalAlignment="Center" Margin="0" />
-                        </StackPanel>
-                        <ToggleSwitch Grid.Column="1" IsChecked="{Binding IsAutoSwitchEnabled}"
-                                      OnContent="On" OffContent="Off" />
-                    </Grid>
-                    <TextBlock Classes="caption" Margin="0,4,0,12"
-                               Text="Automatically switches fan profile based on CPU/GPU temperature. Uses the higher of CPU or GPU temp." />
-
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12">
-                        <StackPanel Spacing="12">
-                            <!-- Balanced threshold -->
-                            <Grid ColumnDefinitions="*,Auto,Auto">
-                                <TextBlock Grid.Column="0" Classes="caption"
-                                           Text="Switch to Balanced above:" VerticalAlignment="Center" />
-                                <NumericUpDown Grid.Column="1"
-                                               Value="{Binding ThresholdBalanced}"
-                                               Minimum="50" Maximum="95" Increment="5"
-                                               MinWidth="120" FormatString="0" />
-                                <TextBlock Grid.Column="2" Text="°C" VerticalAlignment="Center" Margin="6,0,0,0" />
-                            </Grid>
-                            <!-- Gaming threshold -->
-                            <Grid ColumnDefinitions="*,Auto,Auto">
-                                <TextBlock Grid.Column="0" Classes="caption"
-                                           Text="Switch to Gaming above:" VerticalAlignment="Center" />
-                                <NumericUpDown Grid.Column="1"
-                                               Value="{Binding ThresholdPerformance}"
-                                               Minimum="60" Maximum="100" Increment="5"
-                                               MinWidth="120" FormatString="0" />
-                                <TextBlock Grid.Column="2" Text="°C" VerticalAlignment="Center" Margin="6,0,0,0" />
-                            </Grid>
-                            <!-- Hysteresis -->
-                            <Grid ColumnDefinitions="*,Auto,Auto">
-                                <TextBlock Grid.Column="0" Classes="caption"
-                                           Text="Hysteresis (dead-band):" VerticalAlignment="Center" />
-                                <NumericUpDown Grid.Column="1"
-                                               Value="{Binding AutoSwitchHysteresis}"
-                                               Minimum="0" Maximum="15" Increment="1"
-                                               MinWidth="120" FormatString="0" />
-                                <TextBlock Grid.Column="2" Text="°C" VerticalAlignment="Center" Margin="6,0,0,0" />
-                            </Grid>
-                            <TextBlock Classes="caption"
-                                       Text="Dead-band prevents flapping: profile only steps down once temp drops this many °C below threshold." />
-                        </StackPanel>
-                    </Border>
-                    <TextBlock Classes="caption" Margin="0,8,0,0"
-                               Text="{Binding ActiveFanProfile, StringFormat='Current profile: {0}'}" />
                 </StackPanel>
             </Border>
 

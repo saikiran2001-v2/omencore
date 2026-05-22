@@ -26,7 +26,7 @@ public static class FanCommand
         
         var profileOption = new Option<string?>(
             aliases: new[] { "--profile", "-p" },
-            description: "Fan profile: auto, silent, balanced, gaming, max");
+            description: "Fan profile: auto, constant, max");
             
         var speedOption = new Option<int?>(
             aliases: new[] { "--speed", "-s" },
@@ -142,9 +142,7 @@ public static class FanCommand
             var success = profile.ToLower() switch
             {
                 "auto" => ec.SetFanProfile(FanProfile.Auto),
-                "silent" => ec.SetFanProfile(FanProfile.Silent),
-                "balanced" => ec.SetFanProfile(FanProfile.Balanced),
-                "gaming" => ec.SetFanProfile(FanProfile.Gaming),
+                "constant" => ec.SetFanProfile(FanProfile.Constant),
                 "max" => ec.SetFanProfile(FanProfile.Max),
                 _ => false
             };

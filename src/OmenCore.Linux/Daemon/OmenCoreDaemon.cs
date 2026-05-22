@@ -41,7 +41,9 @@ public class OmenCoreDaemon : IDisposable
     private DateTime _lastPerformanceHoldCheck = DateTime.MinValue;
     private int _performanceHoldTick;
     private bool _thermalPowerUnsupportedLogged;
-    
+
+    private FanProfile _configuredFanProfile = FanProfile.Auto;
+
     public OmenCoreDaemon(OmenCoreConfig config)
     {
         _config = config;
@@ -194,7 +196,7 @@ public class OmenCoreDaemon : IDisposable
                     }
 
                     CheckAndHoldPerformanceMode();
-                    
+
                     // Log periodically (less often in low-overhead mode)
                     logCounter++;
                     var logInterval = _lowOverheadMode ? 60 : 30;
@@ -338,9 +340,12 @@ public class OmenCoreDaemon : IDisposable
                 "balanced" => FanProfile.Balanced,
                 "gaming" => FanProfile.Gaming,
                 "max" => FanProfile.Max,
+                "constant" => FanProfile.Constant,
                 _ => FanProfile.Auto
             };
-            
+
+            _configuredFanProfile = profile;
+
             if (_ec.SetFanProfile(profile))
             {
                 Log($"  Fan profile: {_config.Fan.Profile}");
