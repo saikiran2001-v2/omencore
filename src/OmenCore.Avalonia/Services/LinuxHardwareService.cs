@@ -54,6 +54,22 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             }
         };
         _pollingTimer.Start();
+
+        // On boards with the patched hp-wmi driver (e.g. 8D40), writing pwm1_enable=2
+        // triggers the fan-stop code path so the EC can spin fans down to 0 RPM at idle.
+        // Best-effort: silently skipped if not root or path not present.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            _ = Task.Run(InitFanStop);
+    }
+
+    private static void InitFanStop()
+    {
+        try
+        {
+            var ec = new OmenCore.Linux.Hardware.LinuxEcController();
+            ec.SetFanProfile(OmenCore.Linux.Hardware.FanProfile.Auto);
+        }
+        catch { }
     }
 
     private async Task PollHardwareAsync()
@@ -199,6 +215,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             cap.ModelName = "HP OMEN 16 (Mock)";
             cap.CpuName = "AMD Ryzen 9 7945HX";
             cap.GpuName = "NVIDIA GeForce RTX 4070";
+            cap.HasNvidiaSettings = true;
             return;
         }
 
@@ -265,6 +282,9 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
         // Longevity: battery charge limit (sysfs)
         _capabilities.SupportsBatteryChargeLimit = await FindChargeThresholdPathAsync() != null;
+
+        // Detect nvidia-settings for the GPU settings launcher button
+        _capabilities.HasNvidiaSettings = ResolveNvidiaSettingsPath() != null;
     }
 
     private static bool DetectFourZoneRgbSupport()
@@ -1564,6 +1584,26 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         {
             throw new UnauthorizedAccessException($"Cannot write to {path}. Run OmenCore as root or ensure the udev rule is applied.", ex);
         }
+    }
+
+    #endregion
+
+    #region NVIDIA Settings
+
+    private static readonly string[] NvidiaSettingsCandidates =
+    {
+        "/usr/bin/nvidia-settings",
+        "/usr/local/bin/nvidia-settings"
+    };
+
+    private static string? ResolveNvidiaSettingsPath()
+    {
+        foreach (var candidate in NvidiaSettingsCandidates)
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+        return null;
     }
 
     #endregion

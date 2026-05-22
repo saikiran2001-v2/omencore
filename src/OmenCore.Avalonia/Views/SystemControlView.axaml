@@ -112,6 +112,20 @@
                 </StackPanel>
             </Border>
             
+            <!-- NVIDIA Settings Card -->
+            <Border Classes="card" IsVisible="{Binding HasNvidiaSettings}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="⚡" FontSize="20" VerticalAlignment="Center" />
+                        <TextBlock Classes="sectionHeader" Text="NVIDIA Settings" VerticalAlignment="Center" Margin="0" />
+                    </StackPanel>
+                    <TextBlock Classes="caption" Text="Open nvidia-settings to adjust PowerMizer, overclocking, and other GPU options." Margin="0,4,0,16" />
+                    <Button Classes="secondary" Content="Open nvidia-settings"
+                            Command="{Binding LaunchNvidiaSettingsCommand}"
+                            HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+
             <!-- Keyboard Lighting Card -->
             <Border Classes="card" IsVisible="{Binding HasKeyboardBacklight}">
                 <StackPanel>

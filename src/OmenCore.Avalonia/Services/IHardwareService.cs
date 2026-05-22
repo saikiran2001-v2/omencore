@@ -51,6 +51,7 @@ public class SystemCapabilities
     public string GpuName { get; set; } = "Unknown";
     public bool SupportsCpuPowerLimit { get; set; }
     public bool SupportsBatteryChargeLimit { get; set; }
+    public bool HasNvidiaSettings { get; set; }
 }
 
 /// <summary>
@@ -72,42 +73,42 @@ public interface IHardwareService
     /// Gets the current hardware status.
     /// </summary>
     Task<HardwareStatus> GetStatusAsync();
-    
+
     /// <summary>
     /// Gets system capabilities.
     /// </summary>
     Task<SystemCapabilities> GetCapabilitiesAsync();
-    
+
     /// <summary>
     /// Gets the current performance mode.
     /// </summary>
     Task<PerformanceMode> GetPerformanceModeAsync();
-    
+
     /// <summary>
     /// Sets the performance mode.
     /// </summary>
     Task SetPerformanceModeAsync(PerformanceMode mode);
-    
+
     /// <summary>
     /// Sets the CPU fan speed (0-100%).
     /// </summary>
     Task SetCpuFanSpeedAsync(int percentage);
-    
+
     /// <summary>
     /// Sets the GPU fan speed (0-100%).
     /// </summary>
     Task SetGpuFanSpeedAsync(int percentage);
-    
+
     /// <summary>
     /// Gets the current GPU mode (hybrid/discrete/integrated).
     /// </summary>
     Task<string> GetGpuModeAsync();
-    
+
     /// <summary>
     /// Sets the GPU mode.
     /// </summary>
     Task SetGpuModeAsync(string mode);
-    
+
     /// <summary>
     /// Sets fan profile (auto/silent/balanced/gaming/max).
     /// </summary>
@@ -117,7 +118,7 @@ public interface IHardwareService
     /// Sets keyboard backlight brightness (0-100).
     /// </summary>
     Task SetKeyboardBrightnessAsync(int brightness);
-    
+
     /// <summary>
     /// Sets keyboard color for all zones.
     /// </summary>

@@ -115,6 +115,10 @@ public partial class SystemControlViewModel : ObservableObject
     [ObservableProperty]
     private bool _hasFourZoneRgb;
 
+    // NVIDIA Settings launcher
+    [ObservableProperty]
+    private bool _hasNvidiaSettings;
+
     // Status
     [ObservableProperty]
     private string _statusMessage = string.Empty;
@@ -168,6 +172,8 @@ public partial class SystemControlViewModel : ObservableObject
             CurrentPerformanceMode = GetPerformanceModeName(mode);
 
             CurrentGpuMode = await _hardwareService.GetGpuModeAsync();
+
+            HasNvidiaSettings = capabilities.HasNvidiaSettings;
         }
         catch (Exception ex)
         {
@@ -418,6 +424,31 @@ public partial class SystemControlViewModel : ObservableObject
         finally
         {
             _suppressPerformanceModeSelectionChange = false;
+        }
+    }
+
+    [RelayCommand]
+    private void LaunchNvidiaSettings()
+    {
+        try
+        {
+            var candidates = new[] { "/usr/bin/nvidia-settings", "/usr/local/bin/nvidia-settings" };
+            var binary = candidates.FirstOrDefault(File.Exists);
+            if (binary == null)
+            {
+                StatusMessage = "nvidia-settings is not installed.";
+                return;
+            }
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = binary,
+                UseShellExecute = false
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to launch nvidia-settings: {ex.Message}";
         }
     }
 }
