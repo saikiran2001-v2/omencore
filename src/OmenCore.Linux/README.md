@@ -191,6 +191,28 @@ sudo omencore-cli daemon --start
 journalctl -u omencore -f
 ```
 
+### Reliability Mode (daemon)
+
+Reliability mode adds four protections aimed at Windows-like stability on newer OMEN boards:
+
+- single-writer lock (daemon owns fan/performance writes),
+- auto-mode stuck-fan watchdog (max->auto kick when hot and both fans stay near 0 RPM),
+- AC/Battery one-shot performance automation,
+- diagnostics snapshot/log stream for visibility.
+
+Configure it in `/etc/omencore/config.toml` under `[reliability]`, then restart daemon:
+
+```bash
+sudo omencore-cli daemon --status
+sudo systemctl restart omencore
+sudo omencore-cli status --json
+```
+
+Diagnostics files:
+
+- `/var/tmp/omencore/reliability-status.json`
+- `/var/tmp/omencore/reliability.log`
+
 ## EC Register Map
 
 Based on [omen-fan](https://github.com/alou-S/omen-fan) documentation:

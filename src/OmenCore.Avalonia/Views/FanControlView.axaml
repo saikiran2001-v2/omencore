@@ -82,6 +82,24 @@
                 </StackPanel>
             </Border>
 
+            <Border Classes="card" IsVisible="{Binding ReliabilityDiagnosticsVisible}">
+                <StackPanel>
+                    <TextBlock Classes="sectionHeader" Text="Reliability Diagnostics" Margin="0" />
+                    <TextBlock Classes="caption" Margin="0,4,0,10" Text="{Binding ReliabilitySummary}" TextWrapping="Wrap" />
+                    <Border Classes="infoBanner">
+                        <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding ReliabilityLogLines}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Classes="caption" Text="{Binding .}" TextWrapping="NoWrap" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- Status Message -->
             <Border Classes="infoBanner"
                     IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">

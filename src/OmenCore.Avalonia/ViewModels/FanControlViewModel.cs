@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OmenCore.Avalonia.Services;
+using OmenCore.Linux.Daemon;
 using System.Collections.ObjectModel;
 
 namespace OmenCore.Avalonia.ViewModels;
@@ -41,6 +42,12 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _statusMessage = "";
 
+    [ObservableProperty]
+    private bool _reliabilityDiagnosticsVisible;
+
+    [ObservableProperty]
+    private string _reliabilitySummary = "";
+
     // Defaults to false — set true only when capabilities confirm direct PWM control
     [ObservableProperty]
     private bool _canEditFanCurve;
@@ -71,12 +78,14 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     private int _thresholdPerformance = 85; // °C: switch up to performance above this
 
     private string _autoSwitchCurrentProfile = string.Empty;
+    private DateTime _lastReliabilityRefreshUtc = DateTime.MinValue;
 
     public bool IsCurveEditorVisible => CanEditFanCurve && IsCustomCurveEnabled;
 
     public ObservableCollection<string> Presets { get; } = new();
     public ObservableCollection<FanCurvePointViewModel> CpuFanCurve { get; } = new();
     public ObservableCollection<FanCurvePointViewModel> GpuFanCurve { get; } = new();
+    public ObservableCollection<string> ReliabilityLogLines { get; } = new();
 
     public FanControlViewModel(
         IHardwareService hardwareService,
@@ -102,6 +111,7 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         LoadPreset("Balanced");
 
         _ = InitializeCapabilitiesAsync();
+        _ = RefreshReliabilityDiagnosticsAsync(force: true);
     }
 
     private async Task InitializeCapabilitiesAsync()
@@ -153,6 +163,8 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 
         if (IsAutoSwitchEnabled && HasFanProfileAccess)
             _ = RunAutoSwitchAsync(Math.Max(CpuTemperature, GpuTemperature));
+
+        _ = RefreshReliabilityDiagnosticsAsync();
     }
 
     private async Task RunAutoSwitchAsync(double maxTemp)
@@ -313,6 +325,43 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
             StatusMessage = $"Failed to set fan profile: {ex.Message}";
             System.Diagnostics.Debug.WriteLine($"SetFanProfile failed: {ex.Message}");
         }
+    }
+
+    private Task RefreshReliabilityDiagnosticsAsync(bool force = false)
+    {
+        if (!force && DateTime.UtcNow - _lastReliabilityRefreshUtc < TimeSpan.FromSeconds(3))
+        {
+            return Task.CompletedTask;
+        }
+
+        _lastReliabilityRefreshUtc = DateTime.UtcNow;
+
+        var snapshot = ReliabilityDiagnosticsStore.ReadSnapshot();
+        var recent = ReliabilityDiagnosticsStore.ReadRecentLogLines(8);
+
+        ReliabilityLogLines.Clear();
+        foreach (var line in recent)
+        {
+            ReliabilityLogLines.Add(line);
+        }
+
+        if (snapshot == null)
+        {
+            ReliabilityDiagnosticsVisible = ReliabilityLogLines.Count > 0;
+            ReliabilitySummary = ReliabilityDiagnosticsVisible
+                ? "Daemon diagnostics log found, but no active reliability snapshot."
+                : "Daemon reliability snapshot unavailable.";
+            return Task.CompletedTask;
+        }
+
+        ReliabilityDiagnosticsVisible = true;
+        var source = string.IsNullOrWhiteSpace(snapshot.PowerSource) ? "unknown" : snapshot.PowerSource;
+        var mode = string.IsNullOrWhiteSpace(snapshot.FanProfile) ? "unknown" : snapshot.FanProfile;
+        var writer = snapshot.SingleWriterActive ? "daemon writer lock active" : "single-writer lock inactive";
+        ReliabilitySummary =
+            $"Reliability {(snapshot.Enabled ? "enabled" : "disabled")} | profile {mode} | power {source} | watchdog trips {snapshot.WatchdogTrips} | {writer}";
+
+        return Task.CompletedTask;
     }
 
     [RelayCommand]

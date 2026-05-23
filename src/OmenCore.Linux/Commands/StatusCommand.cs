@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using OmenCore.Linux.Config;
+using OmenCore.Linux.Daemon;
 using OmenCore.Linux.Hardware;
 
 namespace OmenCore.Linux.Commands;
@@ -78,6 +79,22 @@ public static class StatusCommand
             PerformanceMode.Cool => "Cool",
             _ => "Unknown"
         };
+
+        var reliabilitySnapshot = ReliabilityDiagnosticsStore.ReadSnapshot();
+        var reliabilityInfo = reliabilitySnapshot == null
+            ? new ReliabilityInfo()
+            : new ReliabilityInfo
+            {
+                Enabled = reliabilitySnapshot.Enabled,
+                SingleWriterActive = reliabilitySnapshot.SingleWriterActive,
+                WriterOwner = reliabilitySnapshot.WriterOwner,
+                FanProfile = reliabilitySnapshot.FanProfile,
+                WatchdogEnabled = reliabilitySnapshot.WatchdogEnabled,
+                WatchdogTrips = reliabilitySnapshot.WatchdogTrips,
+                PowerSource = reliabilitySnapshot.PowerSource,
+                LastAutomationMode = reliabilitySnapshot.LastAutomationMode,
+                UpdatedAtUnix = reliabilitySnapshot.UpdatedAtUnix
+            };
         
         if (jsonOutput)
         {
@@ -124,6 +141,7 @@ public static class StatusCommand
                         ? "root privileges detected; writable interfaces depend on kernel/firmware-exposed paths"
                         : "run with sudo for write-capable fan/performance control"
                 },
+                Reliability = reliabilityInfo,
                 GpuTelemetrySource = gpuReading?.Source ?? "unavailable",
                 GpuTelemetryPath = gpuReading?.Path ?? string.Empty,
                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
@@ -214,6 +232,25 @@ public static class StatusCommand
         else
         {
             Console.WriteLine("║    N/A - EC access required                               ║");
+        }
+
+        // Reliability
+        Console.WriteLine("╠═══════════════════════════════════════════════════════════╣");
+        Console.WriteLine("║  RELIABILITY MODE                                         ║");
+        if (reliabilitySnapshot != null)
+        {
+            Console.WriteLine($"║    Enabled: {(reliabilitySnapshot.Enabled ? "yes" : "no"),-43} ║");
+            Console.WriteLine($"║    Single writer: {(reliabilitySnapshot.SingleWriterActive ? "active" : "inactive"),-37} ║");
+            Console.WriteLine($"║    Watchdog trips: {reliabilitySnapshot.WatchdogTrips,3}                                 ║");
+            Console.WriteLine($"║    Power source: {Truncate(reliabilitySnapshot.PowerSource, 43),-43} ║");
+            if (!string.IsNullOrWhiteSpace(reliabilitySnapshot.LastError))
+            {
+                Console.WriteLine($"║    Last error: {Truncate(reliabilitySnapshot.LastError, 43),-43} ║");
+            }
+        }
+        else
+        {
+            Console.WriteLine("║    No daemon reliability snapshot found                   ║");
         }
         
         // Keyboard

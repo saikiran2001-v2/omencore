@@ -8,7 +8,7 @@ namespace OmenCore.Linux.Config;
 /// </summary>
 public class OmenCoreConfig
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public GeneralConfig General { get; set; } = new();
@@ -18,6 +18,7 @@ public class OmenCoreConfig
     public ThermalConfig Thermal { get; set; } = new();
     public KeyboardConfig Keyboard { get; set; } = new();
     public StartupConfig Startup { get; set; } = new();
+    public ReliabilityConfig Reliability { get; set; } = new();
 
     private static readonly string DefaultConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -119,7 +120,7 @@ public class OmenCoreConfig
             # Place this file at ~/.config/omencore/config.toml or /etc/omencore/config.toml
 
             # Schema version for migration compatibility.
-            schema_version = 2
+            schema_version = 3
 
             [general]
             # Polling interval in milliseconds for daemon mode
@@ -128,7 +129,7 @@ public class OmenCoreConfig
             log_level = "info"
 
             [fan]
-            # Fan profile: auto, silent, balanced, gaming, max, custom
+            # Fan profile: auto, constant, max (legacy values are still accepted)
             profile = "auto"
             # Enable fan boost mode (more aggressive cooling)
             boost = false
@@ -202,6 +203,24 @@ public class OmenCoreConfig
             apply_on_boot = true
             # Restore previous fan/performance settings when daemon exits
             restore_on_exit = true
+
+            [reliability]
+            # Master switch for reliability helpers (single writer, watchdog, power automation)
+            enabled = true
+            # Make daemon the preferred writer for fan/perf state while running
+            force_single_writer = true
+            # Auto-mode only: if temps are high and both fans remain near 0 RPM, kick max->auto once
+            stuck_fan_watchdog_enabled = true
+            watchdog_temp_c = 72
+            watchdog_min_fan_rpm = 400
+            watchdog_consecutive_hits = 3
+            watchdog_cooldown_seconds = 45
+            # Apply performance mode once when AC/Battery source changes
+            ac_battery_automation_enabled = true
+            ac_mode = "performance"
+            battery_mode = "balanced"
+            # Number of reliability log lines shown in diagnostics viewers
+            diagnostics_log_lines = 40
             """;
     }
 
@@ -232,6 +251,17 @@ public class OmenCoreConfig
             });
         }
 
+        if (fileSchemaVersion <= 2)
+        {
+            report.Migrations.Add(new OmenCoreConfigMigrationEntry
+            {
+                Path = path,
+                FromVersion = fileSchemaVersion,
+                ToVersion = 3,
+                Note = "Added [reliability] defaults for single-writer, watchdog, and AC/Battery automation."
+            });
+        }
+
         table["schema_version"] = CurrentSchemaVersion;
     }
 
@@ -247,6 +277,9 @@ public class OmenCoreConfig
         MoveTopLevelKeyToSection(table, "keyboard.brightness", "keyboard", "brightness", report, path);
         MoveTopLevelKeyToSection(table, "startup.apply", "startup", "apply_on_boot", report, path);
         MoveTopLevelKeyToSection(table, "general.polling_interval_ms", "general", "poll_interval_ms", report, path);
+        MoveTopLevelKeyToSection(table, "reliability.enabled", "reliability", "enabled", report, path);
+        MoveTopLevelKeyToSection(table, "reliability.force_single_writer", "reliability", "force_single_writer", report, path);
+        MoveTopLevelKeyToSection(table, "reliability.watchdog_temp_c", "reliability", "watchdog_temp_c", report, path);
     }
 
     private static void MoveTopLevelKeyToSection(
@@ -402,6 +435,32 @@ public class OmenCoreConfig
             if (GetBool(startup, "restore_on_exit") is { } restoreExit)
                 config.Startup.RestoreOnExit = restoreExit;
         }
+
+        if (TryGetTable(root, "reliability", out var reliability))
+        {
+            if (GetBool(reliability, "enabled") is { } enabled)
+                config.Reliability.Enabled = enabled;
+            if (GetBool(reliability, "force_single_writer") is { } singleWriter)
+                config.Reliability.ForceSingleWriter = singleWriter;
+            if (GetBool(reliability, "stuck_fan_watchdog_enabled") is { } watchdog)
+                config.Reliability.StuckFanWatchdogEnabled = watchdog;
+            if (GetInt(reliability, "watchdog_temp_c") is { } watchdogTemp)
+                config.Reliability.WatchdogTempC = watchdogTemp;
+            if (GetInt(reliability, "watchdog_min_fan_rpm") is { } minRpm)
+                config.Reliability.WatchdogMinFanRpm = minRpm;
+            if (GetInt(reliability, "watchdog_consecutive_hits") is { } consecutiveHits)
+                config.Reliability.WatchdogConsecutiveHits = consecutiveHits;
+            if (GetInt(reliability, "watchdog_cooldown_seconds") is { } cooldown)
+                config.Reliability.WatchdogCooldownSeconds = cooldown;
+            if (GetBool(reliability, "ac_battery_automation_enabled") is { } acBatteryAutomation)
+                config.Reliability.AcBatteryAutomationEnabled = acBatteryAutomation;
+            if (GetString(reliability, "ac_mode") is { } acMode)
+                config.Reliability.AcMode = acMode;
+            if (GetString(reliability, "battery_mode") is { } batteryMode)
+                config.Reliability.BatteryMode = batteryMode;
+            if (GetInt(reliability, "diagnostics_log_lines") is { } diagnosticsLines)
+                config.Reliability.DiagnosticsLogLines = diagnosticsLines;
+        }
     }
 
     private static void Sanitize(OmenCoreConfig config, OmenCoreConfigLoadReport report)
@@ -436,6 +495,14 @@ public class OmenCoreConfig
             config.Thermal.RestoreTempC = Math.Max(50, config.Thermal.ThrottleTempC - 10);
             report.Warnings.Add("thermal.restore_temp_c was not lower than thermal.throttle_temp_c; adjusted automatically.");
         }
+
+        config.Reliability.WatchdogTempC = Math.Clamp(config.Reliability.WatchdogTempC, 45, 110);
+        config.Reliability.WatchdogMinFanRpm = Math.Clamp(config.Reliability.WatchdogMinFanRpm, 0, 4000);
+        config.Reliability.WatchdogConsecutiveHits = Math.Clamp(config.Reliability.WatchdogConsecutiveHits, 1, 20);
+        config.Reliability.WatchdogCooldownSeconds = Math.Clamp(config.Reliability.WatchdogCooldownSeconds, 5, 600);
+        config.Reliability.DiagnosticsLogLines = Math.Clamp(config.Reliability.DiagnosticsLogLines, 5, 200);
+        config.Reliability.AcMode = NormalizePerformanceMode(config.Reliability.AcMode);
+        config.Reliability.BatteryMode = NormalizePerformanceMode(config.Reliability.BatteryMode);
     }
 
     private static bool TryGetTable(TomlTable root, string key, out TomlTable table)
@@ -515,7 +582,7 @@ public class OmenCoreConfig
         var value = input.Trim().ToLowerInvariant();
         return value switch
         {
-            "auto" or "silent" or "balanced" or "gaming" or "max" or "custom" => value,
+            "auto" or "silent" or "balanced" or "gaming" or "constant" or "max" or "custom" => value,
             _ => "auto"
         };
     }
@@ -674,4 +741,19 @@ public class ThermalConfig
     /// CPU C below which the system is considered cooled-down and the performance mode is re-applied.
     /// </summary>
     public int RestoreTempC { get; set; } = 80;
+}
+
+public class ReliabilityConfig
+{
+    public bool Enabled { get; set; } = true;
+    public bool ForceSingleWriter { get; set; } = true;
+    public bool StuckFanWatchdogEnabled { get; set; } = true;
+    public int WatchdogTempC { get; set; } = 72;
+    public int WatchdogMinFanRpm { get; set; } = 400;
+    public int WatchdogConsecutiveHits { get; set; } = 3;
+    public int WatchdogCooldownSeconds { get; set; } = 45;
+    public bool AcBatteryAutomationEnabled { get; set; } = true;
+    public string AcMode { get; set; } = "performance";
+    public string BatteryMode { get; set; } = "balanced";
+    public int DiagnosticsLogLines { get; set; } = 40;
 }

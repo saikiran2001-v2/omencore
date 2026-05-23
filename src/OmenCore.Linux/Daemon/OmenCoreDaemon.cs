@@ -43,6 +43,16 @@ public class OmenCoreDaemon : IDisposable
     private bool _thermalPowerUnsupportedLogged;
 
     private FanProfile _configuredFanProfile = FanProfile.Auto;
+    private DateTime _lastWatchdogKickUtc = DateTime.MinValue;
+    private int _watchdogConsecutiveHits;
+    private int _watchdogTrips;
+    private bool? _lastOnBatteryState;
+    private DateTime _lastAutomationUtc = DateTime.MinValue;
+    private string _lastAutomationMode = string.Empty;
+    private string _lastWatchdogReason = string.Empty;
+    private string _lastReliabilityError = string.Empty;
+    private DateTime _lastSnapshotWriteUtc = DateTime.MinValue;
+    private FileStream? _singleWriterLockHandle;
 
     public OmenCoreDaemon(OmenCoreConfig config)
     {
@@ -86,6 +96,12 @@ public class OmenCoreDaemon : IDisposable
             Log("Error: EC not available. Load ec_sys with write_support=1");
             return;
         }
+
+        ReliabilityDiagnosticsStore.EnsureDiagnosticsDirectory();
+        if (!TryAcquireSingleWriterLock())
+        {
+            return;
+        }
         
         // Create PID file
         WritePidFile();
@@ -101,6 +117,15 @@ public class OmenCoreDaemon : IDisposable
         Log("═══════════════════════════════════════════════════════════");
         Log($"Config: {(_config.Fan.Profile == "custom" ? "Custom fan curve" : $"Profile: {_config.Fan.Profile}")}");
         Log($"Poll interval: {_config.General.PollIntervalMs}ms");
+        Log($"Reliability mode: {(_config.Reliability.Enabled ? "enabled" : "disabled")}");
+        if (!_config.Reliability.Enabled)
+        {
+            ReliabilityDiagnosticsStore.WriteSnapshot(new ReliabilityStatusSnapshot
+            {
+                Enabled = false,
+                UpdatedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            });
+        }
         
         // Apply startup configuration
         if (_config.Startup.ApplyOnBoot)
@@ -196,6 +221,8 @@ public class OmenCoreDaemon : IDisposable
                     }
 
                     CheckAndHoldPerformanceMode();
+                    CheckReliabilityPolicies(cpuTemp, gpuTemp, fan1, fan2);
+                    WriteReliabilitySnapshot(cpuTemp, gpuTemp, fan1, fan2);
 
                     // Log periodically (less often in low-overhead mode)
                     logCounter++;
@@ -325,6 +352,241 @@ public class OmenCoreDaemon : IDisposable
             }
         }
     }
+
+    private bool TryAcquireSingleWriterLock()
+    {
+        if (!_config.Reliability.Enabled || !_config.Reliability.ForceSingleWriter)
+        {
+            Environment.SetEnvironmentVariable(ReliabilityDiagnosticsStore.WriterRoleEnvVar, ReliabilityDiagnosticsStore.DaemonWriterRole);
+            return true;
+        }
+
+        try
+        {
+            _singleWriterLockHandle = new FileStream(
+                ReliabilityDiagnosticsStore.SingleWriterLockPath,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.Read);
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                _singleWriterLockHandle.Lock(0, 1);
+            }
+
+            Environment.SetEnvironmentVariable(ReliabilityDiagnosticsStore.WriterRoleEnvVar, ReliabilityDiagnosticsStore.DaemonWriterRole);
+            var owner = $"{ReliabilityDiagnosticsStore.DaemonWriterRole}:{Environment.ProcessId}:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+            _singleWriterLockHandle.SetLength(0);
+            using var writer = new StreamWriter(_singleWriterLockHandle, System.Text.Encoding.UTF8, 1024, leaveOpen: true);
+            writer.Write(owner);
+            writer.Flush();
+            _singleWriterLockHandle.Flush(flushToDisk: true);
+            _singleWriterLockHandle.Seek(0, SeekOrigin.Begin);
+
+            LogReliability("single-writer lock acquired");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _lastReliabilityError = $"single-writer lock failed: {ex.Message}";
+            Log($"[reliability] {_lastReliabilityError}");
+            return false;
+        }
+    }
+
+    private void ReleaseSingleWriterLock()
+    {
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                _singleWriterLockHandle?.Unlock(0, 1);
+            }
+        }
+        catch
+        {
+            // Ignore unlock errors.
+        }
+
+        try
+        {
+            _singleWriterLockHandle?.Dispose();
+            _singleWriterLockHandle = null;
+        }
+        catch
+        {
+            // Ignore dispose errors.
+        }
+
+        try
+        {
+            if (File.Exists(ReliabilityDiagnosticsStore.SingleWriterLockPath))
+            {
+                File.Delete(ReliabilityDiagnosticsStore.SingleWriterLockPath);
+            }
+        }
+        catch
+        {
+            // Ignore lock file cleanup errors.
+        }
+    }
+
+    private void CheckReliabilityPolicies(int cpuTemp, int gpuTemp, int fan1, int fan2)
+    {
+        if (!_config.Reliability.Enabled)
+        {
+            return;
+        }
+
+        var onBattery = _battery.IsOnBattery();
+        CheckAcBatteryOneShotAutomation(onBattery);
+        CheckStuckFanWatchdog(cpuTemp, gpuTemp, fan1, fan2, onBattery);
+    }
+
+    private void CheckAcBatteryOneShotAutomation(bool onBattery)
+    {
+        if (!_config.Reliability.AcBatteryAutomationEnabled)
+        {
+            return;
+        }
+
+        if (!_lastOnBatteryState.HasValue)
+        {
+            _lastOnBatteryState = onBattery;
+            return;
+        }
+
+        if (_lastOnBatteryState.Value == onBattery)
+        {
+            return;
+        }
+
+        _lastOnBatteryState = onBattery;
+        var targetMode = onBattery ? _config.Reliability.BatteryMode : _config.Reliability.AcMode;
+        var perfMode = ResolvePerformanceMode(targetMode);
+
+        if (_ec.SetPerformanceMode(perfMode))
+        {
+            _lastAutomationMode = targetMode;
+            _lastAutomationUtc = DateTime.UtcNow;
+            LogReliability($"power source changed to {(onBattery ? "battery" : "ac")} -> set performance mode '{targetMode}'");
+        }
+        else
+        {
+            _lastReliabilityError = $"failed AC/Battery automation to '{targetMode}'";
+            Log($"[reliability] {_lastReliabilityError}");
+        }
+    }
+
+    private void CheckStuckFanWatchdog(int cpuTemp, int gpuTemp, int fan1, int fan2, bool onBattery)
+    {
+        if (!_config.Reliability.StuckFanWatchdogEnabled)
+        {
+            return;
+        }
+
+        if (_configuredFanProfile != FanProfile.Auto && _configuredFanProfile != FanProfile.Constant)
+        {
+            _watchdogConsecutiveHits = 0;
+            return;
+        }
+
+        if (_configuredFanProfile == FanProfile.Constant)
+        {
+            _watchdogConsecutiveHits = 0;
+            return;
+        }
+
+        var maxTemp = Math.Max(cpuTemp, gpuTemp);
+        var fansLow = fan1 <= _config.Reliability.WatchdogMinFanRpm &&
+                      fan2 <= _config.Reliability.WatchdogMinFanRpm;
+        var thermalCondition = maxTemp >= _config.Reliability.WatchdogTempC;
+
+        if (!thermalCondition || !fansLow)
+        {
+            _watchdogConsecutiveHits = 0;
+            return;
+        }
+
+        _watchdogConsecutiveHits++;
+        if (_watchdogConsecutiveHits < _config.Reliability.WatchdogConsecutiveHits)
+        {
+            return;
+        }
+
+        var cooldown = TimeSpan.FromSeconds(_config.Reliability.WatchdogCooldownSeconds);
+        if (DateTime.UtcNow - _lastWatchdogKickUtc < cooldown)
+        {
+            return;
+        }
+
+        _watchdogConsecutiveHits = 0;
+        var reason = $"auto watchdog trigger (temp={maxTemp}C, fans={fan1}/{fan2}rpm, power={(onBattery ? "battery" : "ac")})";
+        _lastWatchdogReason = reason;
+
+        var kickSucceeded = _ec.SetFanProfile(FanProfile.Max);
+        Thread.Sleep(400);
+        kickSucceeded = _ec.SetFanProfile(FanProfile.Auto) && kickSucceeded;
+
+        _lastWatchdogKickUtc = DateTime.UtcNow;
+        if (kickSucceeded)
+        {
+            _watchdogTrips++;
+            LogReliability($"{reason}; kick=max->auto succeeded");
+        }
+        else
+        {
+            _lastReliabilityError = $"{reason}; kick=max->auto failed";
+            Log($"[reliability] {_lastReliabilityError}");
+        }
+    }
+
+    private void WriteReliabilitySnapshot(int cpuTemp, int gpuTemp, int fan1, int fan2)
+    {
+        if (!_config.Reliability.Enabled)
+        {
+            return;
+        }
+
+        if (DateTime.UtcNow - _lastSnapshotWriteUtc < TimeSpan.FromSeconds(2))
+        {
+            return;
+        }
+
+        _lastSnapshotWriteUtc = DateTime.UtcNow;
+
+        var onBattery = _lastOnBatteryState ?? _battery.IsOnBattery();
+        var snapshot = new ReliabilityStatusSnapshot
+        {
+            Enabled = _config.Reliability.Enabled,
+            SingleWriterEnabled = _config.Reliability.ForceSingleWriter,
+            SingleWriterActive = _singleWriterLockHandle != null,
+            WriterOwner = ReliabilityDiagnosticsStore.ReadSingleWriterOwner() ?? string.Empty,
+            FanProfile = _configuredFanProfile.ToString().ToLowerInvariant(),
+            WatchdogEnabled = _config.Reliability.StuckFanWatchdogEnabled,
+            WatchdogTrips = _watchdogTrips,
+            LastWatchdogKickUnix = _lastWatchdogKickUtc == DateTime.MinValue ? 0 : new DateTimeOffset(_lastWatchdogKickUtc).ToUnixTimeSeconds(),
+            LastWatchdogReason = _lastWatchdogReason,
+            AcBatteryAutomationEnabled = _config.Reliability.AcBatteryAutomationEnabled,
+            PowerSource = onBattery ? "battery" : "ac",
+            LastAutomationMode = _lastAutomationMode,
+            LastAutomationUnix = _lastAutomationUtc == DateTime.MinValue ? 0 : new DateTimeOffset(_lastAutomationUtc).ToUnixTimeSeconds(),
+            CpuTempC = cpuTemp,
+            GpuTempC = gpuTemp,
+            CpuFanRpm = fan1,
+            GpuFanRpm = fan2,
+            LastError = _lastReliabilityError,
+            UpdatedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+        };
+
+        ReliabilityDiagnosticsStore.WriteSnapshot(snapshot);
+    }
+
+    private void LogReliability(string message)
+    {
+        Log($"[reliability] {message}");
+        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        ReliabilityDiagnosticsStore.AppendLogLine($"[{timestamp}] {message}");
+    }
     
     private async Task ApplyStartupConfigAsync()
     {
@@ -415,6 +677,8 @@ public class OmenCoreDaemon : IDisposable
         
         // Stop config watcher
         _configWatcher?.Dispose();
+
+        ReleaseSingleWriterLock();
         
         Log("Daemon stopped");
         await Task.CompletedTask;

@@ -8,6 +8,8 @@ namespace OmenCore.Linux;
 /// </summary>
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(SystemStatus))]
+[JsonSerializable(typeof(ReliabilityInfo))]
+[JsonSerializable(typeof(Daemon.ReliabilityStatusSnapshot))]
 [JsonSerializable(typeof(Commands.DiagnoseInfo))]
 [JsonSerializable(typeof(Commands.LinuxKernelIssueHint))]
 [JsonSerializable(typeof(Commands.LinuxServiceDiagnostics))]
@@ -34,6 +36,7 @@ public class SystemStatus
     public LinuxAccessInfo Access { get; set; } = new();
     public string GpuTelemetrySource { get; set; } = "unavailable";
     public string GpuTelemetryPath { get; set; } = string.Empty;
+    public ReliabilityInfo Reliability { get; set; } = new();
     public long Timestamp { get; set; }
 }
 
@@ -73,4 +76,17 @@ public class PerformanceInfo
     public bool HoldEnabled { get; set; }
     public int HoldIntervalSeconds { get; set; }
     public int? ThermalPowerLimit { get; set; }
+}
+
+public class ReliabilityInfo
+{
+    public bool Enabled { get; set; }
+    public bool SingleWriterActive { get; set; }
+    public string WriterOwner { get; set; } = string.Empty;
+    public string FanProfile { get; set; } = string.Empty;
+    public bool WatchdogEnabled { get; set; }
+    public int WatchdogTrips { get; set; }
+    public string PowerSource { get; set; } = string.Empty;
+    public string LastAutomationMode { get; set; } = string.Empty;
+    public long UpdatedAtUnix { get; set; }
 }

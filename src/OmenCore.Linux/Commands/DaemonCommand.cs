@@ -356,6 +356,21 @@ WantedBy=multi-user.target
         Console.WriteLine($"Hold interval   : {config.Performance.HoldIntervalSeconds}s");
         Console.WriteLine($"Power limit     : {FormatPowerLimit(config.Performance.ThermalPowerLimit)}");
         Console.WriteLine();
+        Console.WriteLine("Reliability");
+        Console.WriteLine($"Enabled         : {FormatEnabled(config.Reliability.Enabled)}");
+        Console.WriteLine($"Single writer   : {FormatEnabled(config.Reliability.ForceSingleWriter)}");
+        Console.WriteLine($"Watchdog        : {FormatEnabled(config.Reliability.StuckFanWatchdogEnabled)}");
+        Console.WriteLine($"AC/Battery auto : {FormatEnabled(config.Reliability.AcBatteryAutomationEnabled)}");
+
+        var snapshot = ReliabilityDiagnosticsStore.ReadSnapshot();
+        if (snapshot != null)
+        {
+            Console.WriteLine($"Runtime profile : {snapshot.FanProfile}");
+            Console.WriteLine($"Power source    : {snapshot.PowerSource}");
+            Console.WriteLine($"Watchdog trips  : {snapshot.WatchdogTrips}");
+            Console.WriteLine($"Last error      : {(string.IsNullOrWhiteSpace(snapshot.LastError) ? "none" : snapshot.LastError)}");
+        }
+        Console.WriteLine();
         Console.WriteLine("Commands");
         Console.WriteLine("Install service : sudo omencore-cli daemon --install");
         Console.WriteLine("Start service   : sudo omencore-cli daemon --start");

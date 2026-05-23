@@ -412,7 +412,7 @@ public class LinuxEcController
     {
         return Environment.UserName == "root" || Mono.Unix.Native.Syscall.getuid() == 0;
     }
-    
+
     /// <summary>
     /// Read a byte from the EC at the specified address.
     /// </summary>
