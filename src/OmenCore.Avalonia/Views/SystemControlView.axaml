@@ -23,15 +23,15 @@
                     <TextBlock Classes="caption" Text="Select a performance profile to optimize for your workload" Margin="0,4,0,16" />
                     
                     <!-- Performance Mode Buttons -->
-                    <Grid ColumnDefinitions="*,*,*" Margin="0,0,0,12">
+                    <Grid ColumnDefinitions="*,*,*,*" Margin="0,0,0,12">
                         <Border Grid.Column="0" Classes="cardInteractive" Margin="0,0,6,0">
-                            <Button Classes="ghost" Command="{Binding SetPerformanceModeCommand}" CommandParameter="Quiet"
+                            <Button Classes="ghost" Command="{Binding SetPerformanceModeCommand}" CommandParameter="Default"
                                     IsEnabled="{Binding CanSetPerformanceMode}"
                                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
                                 <StackPanel HorizontalAlignment="Center">
-                                    <TextBlock Text="🔇" FontSize="24" HorizontalAlignment="Center" />
-                                    <TextBlock Text="Quiet" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
-                                    <TextBlock Classes="caption" Text="Battery saver" HorizontalAlignment="Center" />
+                                    <TextBlock Text="🛠️" FontSize="24" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Default" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                    <TextBlock Classes="caption" Text="Firmware default" HorizontalAlignment="Center" />
                                 </StackPanel>
                             </Button>
                         </Border>
@@ -46,7 +46,7 @@
                                 </StackPanel>
                             </Button>
                         </Border>
-                        <Border Grid.Column="2" Classes="cardInteractive" Margin="6,0,0,0">
+                        <Border Grid.Column="2" Classes="cardInteractive" Margin="3,0">
                             <Button Classes="ghost" Command="{Binding SetPerformanceModeCommand}" CommandParameter="Performance"
                                     IsEnabled="{Binding CanSetPerformanceMode}"
                                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
@@ -54,6 +54,17 @@
                                     <TextBlock Text="🚀" FontSize="24" HorizontalAlignment="Center" />
                                     <TextBlock Text="Performance" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
                                     <TextBlock Classes="caption" Text="Max power" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Border>
+                        <Border Grid.Column="3" Classes="cardInteractive" Margin="6,0,0,0">
+                            <Button Classes="ghost" Command="{Binding SetPerformanceModeCommand}" CommandParameter="Cool"
+                                    IsEnabled="{Binding CanSetPerformanceMode}"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <TextBlock Text="❄️" FontSize="24" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Cool" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                    <TextBlock Classes="caption" Text="Cool profile" HorizontalAlignment="Center" />
                                 </StackPanel>
                             </Button>
                         </Border>
@@ -146,6 +157,25 @@
                             <Slider Value="{Binding KeyboardBrightness}" 
                                     Minimum="0" Maximum="100"
                                     Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Animation Settings -->
+                    <Border Background="#141414" CornerRadius="6" Padding="16,12" Margin="0,0,0,12"
+                            IsVisible="{Binding CanSetKeyboardAnimation}">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Animation" />
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <ComboBox Grid.Column="0" Margin="0,0,10,0"
+                                          ItemsSource="{Binding KeyboardAnimations}"
+                                          SelectedIndex="{Binding SelectedKeyboardAnimationIndex, Mode=TwoWay}" />
+                                <Button Grid.Column="1" Classes="secondary" Content="Apply" Margin="0,0,10,0"
+                                        Command="{Binding SetKeyboardAnimationCommand}" />
+                                <Border Grid.Column="2" Background="#1A00BFFF" CornerRadius="4" Padding="10,4">
+                                    <TextBlock Text="{Binding CurrentKeyboardAnimation}"
+                                               Foreground="{DynamicResource OmenBlueBrush}" />
+                                </Border>
+                            </Grid>
                         </StackPanel>
                     </Border>
                     

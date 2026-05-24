@@ -16,6 +16,8 @@ public class LinuxKeyboardController
     private const string KEYBOARD_BACKLIGHT_PATH = "/sys/class/leds/hp::kbd_backlight";
     private const string DMI_PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name";
     private const string FOURZONE_COLOR_PATH_NAME = "fourzone_color";
+    private const string FOURZONE_BRIGHTNESS_PATH_NAME = "fourzone_brightness";
+    private const string FOURZONE_ANIMATION_PATH_NAME = "fourzone_animation";
     
     /// <summary>
     /// Model substrings known to have per-key RGB keyboards.
@@ -41,16 +43,23 @@ public class LinuxKeyboardController
     public bool HasZoneControl { get; }
     public bool HasFourZoneControl { get; }
     public bool IsPerKeyRgb { get; }
-    public bool SupportsBrightnessControl => HasFourZoneControl || File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness"));
+    public bool HasFourZoneBrightnessControl { get; }
+    public bool HasFourZoneAnimationControl { get; }
+    public bool SupportsBrightnessControl => HasFourZoneBrightnessControl || HasFourZoneControl || File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness"));
     public string KeyboardType => IsPerKeyRgb ? "Per-Key RGB" : "4-Zone";
     public int ZoneCount => IsPerKeyRgb ? 0 : 4;
 
     private string FourZoneColorPath => Path.Combine(HP_WMI_PATH, FOURZONE_COLOR_PATH_NAME);
+    private string FourZoneBrightnessPath => Path.Combine(HP_WMI_PATH, FOURZONE_BRIGHTNESS_PATH_NAME);
+    private string FourZoneAnimationPath => Path.Combine(HP_WMI_PATH, FOURZONE_ANIMATION_PATH_NAME);
 
     public LinuxKeyboardController()
     {
         HasFourZoneControl = File.Exists(Path.Combine(HP_WMI_PATH, FOURZONE_COLOR_PATH_NAME));
-        IsAvailable = Directory.Exists(HP_WMI_PATH) || Directory.Exists(KEYBOARD_BACKLIGHT_PATH) || HasFourZoneControl;
+        HasFourZoneBrightnessControl = File.Exists(Path.Combine(HP_WMI_PATH, FOURZONE_BRIGHTNESS_PATH_NAME));
+        HasFourZoneAnimationControl = File.Exists(Path.Combine(HP_WMI_PATH, FOURZONE_ANIMATION_PATH_NAME));
+        IsAvailable = Directory.Exists(HP_WMI_PATH) || Directory.Exists(KEYBOARD_BACKLIGHT_PATH) ||
+            HasFourZoneControl || HasFourZoneBrightnessControl || HasFourZoneAnimationControl;
         HasZoneControl = File.Exists(Path.Combine(HP_WMI_PATH, "keyboard_zones"));
         IsPerKeyRgb = DetectPerKeyRgb();
     }
@@ -192,7 +201,15 @@ public class LinuxKeyboardController
 
         try
         {
-            // fourzone_color: scale each zone's RGB channels by the brightness factor
+            if (HasFourZoneBrightnessControl)
+            {
+                var raw = Math.Clamp((int)Math.Round(Math.Clamp(percent, 0, 100) * 255.0 / 100.0), 0, 255);
+                File.WriteAllText(FourZoneBrightnessPath, raw.ToString());
+                return true;
+            }
+
+            // Legacy fallback when dedicated fourzone brightness node is unavailable:
+            // scale each zone's RGB channels directly in fourzone_color.
             if (HasFourZoneControl)
             {
                 var current = File.ReadAllText(FourZoneColorPath).Trim();
@@ -240,8 +257,8 @@ public class LinuxKeyboardController
         if (!IsAvailable)
             return "HP WMI keyboard interface is not available.";
 
-        if (!HasFourZoneControl && !File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness")))
-            return $"No supported brightness interface found (checked fourzone_color and {KEYBOARD_BACKLIGHT_PATH})";
+        if (!HasFourZoneBrightnessControl && !HasFourZoneControl && !File.Exists(Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness")))
+            return $"No supported brightness interface found (checked fourzone_brightness, fourzone_color and {KEYBOARD_BACKLIGHT_PATH})";
 
         return "Unknown keyboard brightness error.";
     }
@@ -261,6 +278,15 @@ public class LinuxKeyboardController
     {
         try
         {
+            if (HasFourZoneBrightnessControl)
+            {
+                var rawText = File.ReadAllText(FourZoneBrightnessPath).Trim();
+                if (int.TryParse(rawText, out var raw))
+                {
+                    return Math.Clamp((int)Math.Round(raw * 100.0 / 255.0), 0, 100);
+                }
+            }
+
             var brightnessPath = Path.Combine(KEYBOARD_BACKLIGHT_PATH, "brightness");
             var maxBrightnessPath = Path.Combine(KEYBOARD_BACKLIGHT_PATH, "max_brightness");
             
@@ -284,6 +310,55 @@ public class LinuxKeyboardController
         catch
         {
             return 0;
+        }
+    }
+
+    /// <summary>
+    /// Set four-zone animation mode as firmware enum value (0-255).
+    /// Requires the fourzone_animation sysfs node.
+    /// </summary>
+    public bool SetAnimationMode(byte mode)
+    {
+        if (!HasFourZoneAnimationControl)
+            return false;
+
+        try
+        {
+            var before = GetAnimationMode();
+            File.WriteAllText(FourZoneAnimationPath, mode.ToString());
+            var after = GetAnimationMode();
+
+            // Accept success only when readback reflects the requested value.
+            // Some firmware accepts the write syscall but ignores unsupported modes.
+            if (after == mode)
+                return true;
+
+            // If the mode was already set, treat as success.
+            return before == mode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Read current four-zone animation mode as firmware enum value.
+    /// Returns -1 when unsupported or unreadable.
+    /// </summary>
+    public int GetAnimationMode()
+    {
+        if (!HasFourZoneAnimationControl)
+            return -1;
+
+        try
+        {
+            var text = File.ReadAllText(FourZoneAnimationPath).Trim();
+            return int.TryParse(text, out var mode) ? mode : -1;
+        }
+        catch
+        {
+            return -1;
         }
     }
 }

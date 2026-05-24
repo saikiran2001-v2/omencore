@@ -209,6 +209,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             cap.SupportsFanSurface = true;
             cap.SupportsPerformanceProfiles = true;
             cap.SupportsKeyboardBrightness = true;
+            cap.SupportsKeyboardAnimation = true;
             cap.FanControlCapabilityClass = "full-control";
             cap.FanControlCapabilityReason = "Mock environment reports full control.";
             cap.ModelName = "HP OMEN 16 (Mock)";
@@ -259,6 +260,10 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         _capabilities.KeyboardBrightnessReason = _capabilities.SupportsKeyboardBrightness
             ? string.Empty
             : "Keyboard brightness sysfs path was not detected on this kernel/board.";
+        _capabilities.SupportsKeyboardAnimation = kbCtrl.HasFourZoneAnimationControl;
+        _capabilities.KeyboardAnimationReason = _capabilities.SupportsKeyboardAnimation
+            ? string.Empty
+            : "fourzone_animation sysfs path was not detected on this kernel/board.";
 
         // Detect RGB capabilities — include fourzone_color for newer OMEN models
         _capabilities.HasFourZoneRgb = kbCtrl.HasFourZoneControl || DetectFourZoneRgbSupport();
@@ -436,11 +441,12 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     {
         return profile.Trim().ToLower() switch
         {
-            "low-power" or "cool" or "quiet" => PerformanceMode.Quiet,
+            "low-power" or "cool" or "quiet" => PerformanceMode.Cool,
             "balanced" => PerformanceMode.Balanced,
             "balanced-performance" => PerformanceMode.Performance,
             "performance" => PerformanceMode.Performance,
-            _ => PerformanceMode.Balanced
+            "default" => PerformanceMode.Default,
+            _ => PerformanceMode.Default
         };
     }
 
@@ -455,10 +461,11 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         
         return mode switch
         {
-            PerformanceMode.Quiet => 
+            PerformanceMode.Cool => 
                 choices.Contains("low-power") ? "low-power" :
                 choices.Contains("quiet") ? "quiet" :
                 choices.Contains("cool") ? "cool" : "low-power",
+            PerformanceMode.Default => "balanced",
             PerformanceMode.Balanced => "balanced",
             PerformanceMode.Performance =>
                 choices.Contains("performance") ? "performance" :
@@ -605,7 +612,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     {
         return raw.Trim().ToLowerInvariant() switch
         {
-            "power-saver" => PerformanceMode.Quiet,
+            "power-saver" => PerformanceMode.Cool,
             "performance" => PerformanceMode.Performance,
             _ => PerformanceMode.Balanced
         };
@@ -615,7 +622,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     {
         return mode switch
         {
-            PerformanceMode.Quiet => "power-saver",
+            PerformanceMode.Cool => "power-saver",
             PerformanceMode.Performance => "performance",
             _ => "balanced"
         };
@@ -738,7 +745,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             // approximate requested fan intensity by switching platform performance profile.
             var mode = clamped switch
             {
-                <= 35 => PerformanceMode.Quiet,
+                <= 35 => PerformanceMode.Cool,
                 <= 70 => PerformanceMode.Balanced,
                 _ => PerformanceMode.Performance
             };
@@ -780,7 +787,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
             var mode = clamped switch
             {
-                <= 35 => PerformanceMode.Quiet,
+                <= 35 => PerformanceMode.Cool,
                 <= 70 => PerformanceMode.Balanced,
                 _ => PerformanceMode.Performance
             };
@@ -875,6 +882,37 @@ public class LinuxHardwareService : IHardwareService, IDisposable
                 throw new NotSupportedException("Keyboard RGB interface is not available on this kernel/board.");
             if (!ctrl.SetZoneColor(zone, r, g, b))
                 throw new InvalidOperationException($"Failed to set keyboard zone {zone} color.");
+            return Task.CompletedTask;
+        });
+    }
+
+    public async Task<int> GetKeyboardAnimationModeAsync()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return 0;
+
+        return await ExecuteWithIoLockAsync(() =>
+        {
+            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+            return Task.FromResult(ctrl.GetAnimationMode());
+        });
+    }
+
+    public async Task SetKeyboardAnimationModeAsync(int mode)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return;
+
+        await ExecuteWithIoLockAsync(() =>
+        {
+            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+            if (!ctrl.HasFourZoneAnimationControl)
+                throw new NotSupportedException("Keyboard animation control is not available on this kernel/board.");
+
+            var value = Math.Clamp(mode, 0, 255);
+            if (!ctrl.SetAnimationMode((byte)value))
+                throw new InvalidOperationException($"Failed to set keyboard animation mode {value}.");
+
             return Task.CompletedTask;
         });
     }

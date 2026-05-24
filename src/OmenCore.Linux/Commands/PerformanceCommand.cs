@@ -94,6 +94,22 @@ public static class PerformanceCommand
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine($"WARN: Performance mode write returned success, but readback is {readback} (requested {mode})");
+                    var profilePath = LinuxSysfsPathMap.ResolveThermalProfilePath();
+                    if (!string.IsNullOrWhiteSpace(profilePath))
+                    {
+                        Console.WriteLine($"      Active profile path: {profilePath}");
+                        Console.WriteLine($"      Active profile value: {ReadTrimmed(profilePath) ?? "<unreadable>"}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("      Active profile path: <none>");
+                    }
+
+                    var acpiValue = ReadTrimmed(LinuxSysfsPathMap.AcpiPlatformProfilePath);
+                    if (!string.IsNullOrWhiteSpace(acpiValue))
+                    {
+                        Console.WriteLine($"      /sys/firmware/acpi/platform_profile: {acpiValue}");
+                    }
                     Console.ResetColor();
                 }
             }
@@ -236,6 +252,24 @@ public static class PerformanceCommand
         };
 
         Console.WriteLine($"Mode: {modeStr}");
+        var profilePath = LinuxSysfsPathMap.ResolveThermalProfilePath();
+        if (!string.IsNullOrWhiteSpace(profilePath))
+        {
+            Console.WriteLine($"Profile path: {profilePath}");
+            Console.WriteLine($"Profile raw:  {ReadTrimmed(profilePath) ?? "<unreadable>"}");
+        }
         Console.WriteLine();
+    }
+
+    private static string? ReadTrimmed(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

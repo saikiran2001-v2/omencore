@@ -47,7 +47,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private int _batterySpeedReduction = 20;
 
-    public string[] PerformanceModes { get; } = { "Quiet", "Balanced", "Performance" };
+    public string[] PerformanceModes { get; } = { "Default", "Balanced", "Performance", "Cool" };
     public int[] PollingIntervals { get; } = { 500, 1000, 2000, 5000 };
     public int[] BatteryReductionOptions { get; } = { 10, 15, 20, 25, 30 };
 
@@ -68,7 +68,7 @@ public partial class SettingsViewModel : ObservableObject
         DarkTheme = _configService.Get<bool>("dark_theme");
         PollingInterval = _configService.Get<int>("polling_interval_ms");
         AutoApplyProfile = _configService.Get<bool>("auto_apply_profile");
-        DefaultPerformanceMode = _configService.Get<string>("default_performance_mode") ?? "Balanced";
+        DefaultPerformanceMode = _configService.Get<string>("default_performance_mode") ?? "Default";
         StartWithSystem = _configService.Get<bool>("start_with_system");
         ShowNotifications = _configService.Get<bool>("show_notifications");
         BatteryAwareFans = _configService.Get<bool>("battery_aware_fans");
@@ -111,7 +111,7 @@ public partial class SettingsViewModel : ObservableObject
         DarkTheme = true;
         PollingInterval = 1000;
         AutoApplyProfile = true;
-        DefaultPerformanceMode = "Balanced";
+        DefaultPerformanceMode = "Default";
         StartWithSystem = false;
         ShowNotifications = true;
         BatteryAwareFans = true;

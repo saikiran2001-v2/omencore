@@ -81,6 +81,7 @@ public partial class SystemControlViewModel : ObservableObject
     private string _performanceProfileReason = "Performance mode control is unavailable on this Linux board/kernel path.";
     private bool _canSetKeyboardBrightness = true;
     private string _keyboardBrightnessReason = "Keyboard brightness control is unavailable on this Linux board/kernel path.";
+    private bool _suppressKeyboardAnimationSelectionChange;
 
     // Performance Mode
     [ObservableProperty]
@@ -115,6 +116,15 @@ public partial class SystemControlViewModel : ObservableObject
     [ObservableProperty]
     private bool _hasFourZoneRgb;
 
+    [ObservableProperty]
+    private bool _canSetKeyboardAnimation;
+
+    [ObservableProperty]
+    private int _selectedKeyboardAnimationIndex;
+
+    [ObservableProperty]
+    private string _currentKeyboardAnimation = "Static";
+
     // NVIDIA Settings launcher
     [ObservableProperty]
     private bool _hasNvidiaSettings;
@@ -123,8 +133,9 @@ public partial class SystemControlViewModel : ObservableObject
     [ObservableProperty]
     private string _statusMessage = string.Empty;
 
-    public string[] PerformanceModes { get; } = { "Quiet", "Balanced", "Performance" };
+    public string[] PerformanceModes { get; } = { "Default", "Balanced", "Performance", "Cool" };
     public string[] GpuModes { get; } = { "Hybrid", "Discrete", "Integrated" };
+    public string[] KeyboardAnimations { get; } = { "Static", "Breathing", "Wave", "Spectrum", "Off" };
 
     /// <summary>
     /// Per-zone base colors. Brightness scaling is applied on write so
@@ -161,6 +172,13 @@ public partial class SystemControlViewModel : ObservableObject
             _keyboardBrightnessReason = string.IsNullOrWhiteSpace(capabilities.KeyboardBrightnessReason)
                 ? "Keyboard brightness control is unavailable on this Linux board/kernel path."
                 : capabilities.KeyboardBrightnessReason;
+            CanSetKeyboardAnimation = capabilities.SupportsKeyboardAnimation;
+
+            if (CanSetKeyboardAnimation)
+            {
+                var animationMode = await _hardwareService.GetKeyboardAnimationModeAsync();
+                UpdateKeyboardAnimationSelection(animationMode);
+            }
 
             if (!CanSetPerformanceMode)
             {
@@ -271,6 +289,14 @@ public partial class SystemControlViewModel : ObservableObject
         _ = ApplyLightingAsync();
     }
 
+    partial void OnSelectedKeyboardAnimationIndexChanged(int value)
+    {
+        if (_suppressKeyboardAnimationSelectionChange || !CanSetKeyboardAnimation)
+            return;
+
+        _ = ApplyKeyboardAnimationAsync(value);
+    }
+
     /// <summary>
     /// Unified lighting write — always composites zone base colors with current brightness.
     /// This fixes the previous bug where SetAllZonesColor (full brightness) and
@@ -327,6 +353,18 @@ public partial class SystemControlViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task SetKeyboardAnimation()
+    {
+        if (!CanSetKeyboardAnimation)
+        {
+            StatusMessage = "Keyboard animation control is unavailable on this kernel/board.";
+            return;
+        }
+
+        await ApplyKeyboardAnimationAsync(SelectedKeyboardAnimationIndex);
+    }
+
+    [RelayCommand]
     private void SetPresetColor(string colorName)
     {
         (byte r, byte g, byte b) = colorName.ToLower() switch
@@ -348,12 +386,62 @@ public partial class SystemControlViewModel : ObservableObject
         _ = ApplyLightingAsync();
     }
 
+    private async Task ApplyKeyboardAnimationAsync(int index)
+    {
+        if (!CanSetKeyboardAnimation)
+            return;
+
+        try
+        {
+            var mode = index switch
+            {
+                0 => 0, // static
+                1 => 1, // breathing
+                2 => 2, // wave
+                3 => 3, // spectrum
+                4 => 255, // off (best effort mapping)
+                _ => 0
+            };
+
+            await _hardwareService.SetKeyboardAnimationModeAsync(mode);
+            CurrentKeyboardAnimation = KeyboardAnimations[Math.Clamp(index, 0, KeyboardAnimations.Length - 1)];
+            StatusMessage = $"Keyboard animation set to {CurrentKeyboardAnimation}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Animation error: {ex.Message}";
+        }
+    }
+
+    private void UpdateKeyboardAnimationSelection(int mode)
+    {
+        var index = mode switch
+        {
+            1 => 1,
+            2 => 2,
+            3 => 3,
+            255 => 4,
+            _ => 0
+        };
+
+        _suppressKeyboardAnimationSelectionChange = true;
+        try
+        {
+            SelectedKeyboardAnimationIndex = index;
+            CurrentKeyboardAnimation = KeyboardAnimations[index];
+        }
+        finally
+        {
+            _suppressKeyboardAnimationSelectionChange = false;
+        }
+    }
+
     private static bool TryParsePerformanceModeName(string modeName, out PerformanceMode mode)
     {
         switch (modeName.Trim())
         {
-            case "Quiet":
-                mode = PerformanceMode.Quiet;
+            case "Default":
+                mode = PerformanceMode.Default;
                 return true;
             case "Balanced":
                 mode = PerformanceMode.Balanced;
@@ -361,8 +449,11 @@ public partial class SystemControlViewModel : ObservableObject
             case "Performance":
                 mode = PerformanceMode.Performance;
                 return true;
+            case "Cool":
+                mode = PerformanceMode.Cool;
+                return true;
             default:
-                mode = PerformanceMode.Balanced;
+                mode = PerformanceMode.Default;
                 return false;
         }
     }
@@ -372,7 +463,7 @@ public partial class SystemControlViewModel : ObservableObject
         switch (index)
         {
             case 0:
-                mode = PerformanceMode.Quiet;
+                mode = PerformanceMode.Default;
                 return true;
             case 1:
                 mode = PerformanceMode.Balanced;
@@ -380,8 +471,11 @@ public partial class SystemControlViewModel : ObservableObject
             case 2:
                 mode = PerformanceMode.Performance;
                 return true;
+            case 3:
+                mode = PerformanceMode.Cool;
+                return true;
             default:
-                mode = PerformanceMode.Balanced;
+                mode = PerformanceMode.Default;
                 return false;
         }
     }
@@ -390,9 +484,10 @@ public partial class SystemControlViewModel : ObservableObject
     {
         return mode switch
         {
-            PerformanceMode.Quiet => 0,
+            PerformanceMode.Default => 0,
             PerformanceMode.Balanced => 1,
             PerformanceMode.Performance => 2,
+            PerformanceMode.Cool => 3,
             _ => 1
         };
     }
@@ -401,9 +496,10 @@ public partial class SystemControlViewModel : ObservableObject
     {
         return mode switch
         {
-            PerformanceMode.Quiet => "Quiet",
+            PerformanceMode.Default => "Default",
             PerformanceMode.Balanced => "Balanced",
             PerformanceMode.Performance => "Performance",
+            PerformanceMode.Cool => "Cool",
             _ => "Balanced"
         };
     }

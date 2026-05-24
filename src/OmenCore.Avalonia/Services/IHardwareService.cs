@@ -42,10 +42,12 @@ public class SystemCapabilities
     public bool SupportsFanSurface { get; set; }
     public bool SupportsPerformanceProfiles { get; set; }
     public bool SupportsKeyboardBrightness { get; set; }
+    public bool SupportsKeyboardAnimation { get; set; }
     public string FanControlCapabilityClass { get; set; } = "unsupported-control";
     public string FanControlCapabilityReason { get; set; } = string.Empty;
     public string PerformanceProfileReason { get; set; } = string.Empty;
     public string KeyboardBrightnessReason { get; set; } = string.Empty;
+    public string KeyboardAnimationReason { get; set; } = string.Empty;
     public string ModelName { get; set; } = "Unknown";
     public string CpuName { get; set; } = "Unknown";
     public string GpuName { get; set; } = "Unknown";
@@ -59,9 +61,10 @@ public class SystemCapabilities
 /// </summary>
 public enum PerformanceMode
 {
-    Quiet = 0,
+    Default = 0,
     Balanced = 1,
-    Performance = 2
+    Performance = 2,
+    Cool = 3
 }
 
 /// <summary>
@@ -128,6 +131,17 @@ public interface IHardwareService
     /// Sets keyboard color for a specific zone (0-3).
     /// </summary>
     Task SetKeyboardZoneColorAsync(int zone, byte r, byte g, byte b);
+
+    /// <summary>
+    /// Gets current keyboard animation mode value (firmware enum, 0-255).
+    /// Returns -1 when unsupported.
+    /// </summary>
+    Task<int> GetKeyboardAnimationModeAsync();
+
+    /// <summary>
+    /// Sets keyboard animation mode value (firmware enum, 0-255).
+    /// </summary>
+    Task SetKeyboardAnimationModeAsync(int mode);
 
     /// <summary>
     /// Gets battery health as a percentage (energy_full / energy_full_design).

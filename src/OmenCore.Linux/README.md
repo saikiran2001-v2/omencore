@@ -141,6 +141,11 @@ omencore-cli keyboard --zone 0 --color 00FF00
 # Set brightness
 omencore-cli keyboard --brightness 80
 
+# Set animation (driver-dependent; requires fourzone_animation sysfs node)
+omencore-cli keyboard --animation static
+omencore-cli keyboard --animation breathing
+omencore-cli keyboard --animation 2
+
 # Turn off
 omencore-cli keyboard --off
 ```

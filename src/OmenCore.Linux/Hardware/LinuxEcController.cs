@@ -486,11 +486,18 @@ public class LinuxEcController
 
         try
         {
-            var validProfiles = new[] { "quiet", "balanced", "balanced-performance", "performance", "extreme" };
-            if (!validProfiles.Contains(profile.ToLower()))
+            var requested = profile.Trim().ToLowerInvariant();
+            var choices = GetAcpiProfileChoices();
+            if (choices.Length > 0 && !choices.Contains(requested, StringComparer.OrdinalIgnoreCase))
+            {
+                requested = ResolveSupportedProfileAlias(requested, choices);
+            }
+
+            var validProfiles = new[] { "quiet", "cool", "low-power", "balanced", "balanced-performance", "performance", "extreme" };
+            if (!validProfiles.Contains(requested))
                 return false;
 
-            File.WriteAllText(thermalPath, profile.ToLower());
+            File.WriteAllText(thermalPath, requested);
             return true;
         }
         catch
@@ -1325,7 +1332,9 @@ public class LinuxEcController
                 {
                     "performance" => PerformanceMode.Performance,
                     "balanced-performance" => PerformanceMode.Performance,
+                    "cool"        => PerformanceMode.Cool,
                     "quiet"       => PerformanceMode.Cool,
+                    "low-power"   => PerformanceMode.Cool,
                     "balanced"    => PerformanceMode.Default,
                     _             => PerformanceMode.Default
                 };
@@ -1343,6 +1352,7 @@ public class LinuxEcController
                 {
                     "performance" => PerformanceMode.Performance,
                     "balanced-performance" => PerformanceMode.Performance,
+                    "cool"        => PerformanceMode.Cool,
                     "low-power"   => PerformanceMode.Cool,
                     "quiet"       => PerformanceMode.Cool,
                     "balanced"    => PerformanceMode.Default,
@@ -1377,7 +1387,7 @@ public class LinuxEcController
             var wmiProfile = mode switch
             {
                 PerformanceMode.Performance => "performance",
-                PerformanceMode.Cool        => "quiet",
+                PerformanceMode.Cool        => "cool",
                 _                           => "balanced"
             };
             if (SetHpWmiThermalProfile(wmiProfile))

@@ -28,6 +28,10 @@ public static class KeyboardCommand
         var brightnessOption = new Option<int?>(
             aliases: new[] { "--brightness", "-b" },
             description: "Brightness level (0-100)");
+
+        var animationOption = new Option<string?>(
+            aliases: new[] { "--animation", "-a" },
+            description: "Animation mode: static|breathing|wave|spectrum|off or numeric firmware value (0-255)");
             
         var offOption = new Option<bool>(
             name: "--off",
@@ -36,17 +40,18 @@ public static class KeyboardCommand
         command.AddOption(colorOption);
         command.AddOption(zoneOption);
         command.AddOption(brightnessOption);
+        command.AddOption(animationOption);
         command.AddOption(offOption);
         
-        command.SetHandler(async (color, zone, brightness, off) =>
+        command.SetHandler(async (color, zone, brightness, animation, off) =>
         {
-            await HandleKeyboardCommandAsync(color, zone, brightness, off);
-        }, colorOption, zoneOption, brightnessOption, offOption);
+            await HandleKeyboardCommandAsync(color, zone, brightness, animation, off);
+        }, colorOption, zoneOption, brightnessOption, animationOption, offOption);
         
         return command;
     }
     
-    private static async Task HandleKeyboardCommandAsync(string? color, int? zone, int? brightness, bool off)
+    private static async Task HandleKeyboardCommandAsync(string? color, int? zone, int? brightness, string? animation, bool off)
     {
         var keyboard = new LinuxKeyboardController();
         
@@ -56,6 +61,39 @@ public static class KeyboardCommand
             Console.WriteLine("Warning: HP WMI keyboard interface not available.");
             Console.WriteLine("  Ensure hp-wmi module is loaded: modprobe hp-wmi");
             Console.ResetColor();
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(animation))
+        {
+            if (!TryParseAnimationMode(animation, out var mode))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("✗ Invalid animation. Use: off, static, breathing, wave, spectrum, or 0-255.");
+                Console.ResetColor();
+                return;
+            }
+
+            if (!keyboard.HasFourZoneAnimationControl)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("⚠ fourzone_animation is not exposed by this driver/kernel.");
+                Console.ResetColor();
+                return;
+            }
+
+            if (keyboard.SetAnimationMode(mode))
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"✓ Keyboard animation mode set to {mode}");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("✗ Failed to set keyboard animation mode");
+                Console.ResetColor();
+            }
             return;
         }
         
@@ -182,6 +220,13 @@ public static class KeyboardCommand
         Console.WriteLine($"║  Available: {(keyboard.IsAvailable ? "Yes" : "No"),-32} ║");
         Console.WriteLine($"║  Backend: HP WMI                             ║");
         Console.WriteLine($"║  Type: {keyboard.KeyboardType,-37} ║");
+        Console.WriteLine($"║  4-Zone Brightness Node: {(keyboard.HasFourZoneBrightnessControl ? "Yes" : "No"),-23} ║");
+        Console.WriteLine($"║  4-Zone Animation Node: {(keyboard.HasFourZoneAnimationControl ? "Yes" : "No"),-24} ║");
+        if (keyboard.HasFourZoneAnimationControl)
+        {
+            var animation = keyboard.GetAnimationMode();
+            Console.WriteLine($"║  Animation Mode: {animation,-31} ║");
+        }
         if (keyboard.IsPerKeyRgb)
         {
             Console.WriteLine($"║  Per-Key: USB HID (not yet on Linux)         ║");
@@ -193,5 +238,29 @@ public static class KeyboardCommand
         }
         Console.WriteLine("╚══════════════════════════════════════════════╝");
         Console.WriteLine();
+    }
+
+    private static bool TryParseAnimationMode(string input, out byte mode)
+    {
+        mode = 0;
+        var value = input.Trim().ToLowerInvariant();
+        switch (value)
+        {
+            case "off":
+            case "static":
+                mode = 0;
+                return true;
+            case "breathing":
+                mode = 1;
+                return true;
+            case "wave":
+                mode = 2;
+                return true;
+            case "spectrum":
+                mode = 3;
+                return true;
+            default:
+                return byte.TryParse(value, out mode);
+        }
     }
 }

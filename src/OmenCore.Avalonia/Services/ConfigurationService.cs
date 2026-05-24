@@ -101,7 +101,7 @@ public class ConfigurationService : IConfigurationService
                 ["dark_theme"] = true,
                 ["polling_interval_ms"] = 1000,
                 ["auto_apply_profile"] = true,
-                ["default_performance_mode"] = "balanced"
+                ["default_performance_mode"] = "default"
             };
             await SaveAsync();
             return;
