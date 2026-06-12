@@ -11,41 +11,43 @@
     
     <Application.Resources>
         <!-- ==================== OMEN Brand Colors ==================== -->
-        <Color x:Key="OmenBlue">#00BFFF</Color>
+        <Color x:Key="OmenCrimson">#FF2950</Color>
+        <Color x:Key="OmenBlue">#00D2FF</Color>
         <Color x:Key="OmenRed">#E31837</Color>
-        <Color x:Key="OmenGreen">#39FF14</Color>
+        <Color x:Key="OmenGreen">#3DFF6E</Color>
         <Color x:Key="OmenPurple">#9D4EDD</Color>
-        <Color x:Key="OmenOrange">#FF6B35</Color>
+        <Color x:Key="OmenOrange">#FF7A18</Color>
         <Color x:Key="OmenCyan">#00FFFF</Color>
         <Color x:Key="OmenYellow">#FFD700</Color>
         
         <!-- ==================== Background Colors ==================== -->
-        <Color x:Key="DarkBackground">#0D0D0D</Color>
-        <Color x:Key="CardBackground">#1A1A1A</Color>
-        <Color x:Key="CardBackgroundHover">#222222</Color>
-        <Color x:Key="SurfaceBackground">#141414</Color>
-        <Color x:Key="SurfaceBorder">#252525</Color>
+        <Color x:Key="DarkBackground">#0A0A0C</Color>
+        <Color x:Key="CardBackground">#131316</Color>
+        <Color x:Key="CardBackgroundHover">#19191D</Color>
+        <Color x:Key="SurfaceBackground">#0E0E11</Color>
+        <Color x:Key="SurfaceBorder">#232329</Color>
         
         <!-- ==================== Text Colors ==================== -->
-        <Color x:Key="PrimaryText">#FFFFFF</Color>
-        <Color x:Key="SecondaryText">#B0B0B0</Color>
-        <Color x:Key="TertiaryText">#666666</Color>
-        <Color x:Key="AccentText">#00BFFF</Color>
+        <Color x:Key="PrimaryText">#F4F4F6</Color>
+        <Color x:Key="SecondaryText">#9C9CA8</Color>
+        <Color x:Key="TertiaryText">#5E5E6A</Color>
+        <Color x:Key="AccentText">#FF2950</Color>
         
         <!-- ==================== Status Colors ==================== -->
-        <Color x:Key="SuccessColor">#39FF14</Color>
-        <Color x:Key="WarningColor">#FF9800</Color>
-        <Color x:Key="ErrorColor">#E31837</Color>
-        <Color x:Key="InfoColor">#00BFFF</Color>
+        <Color x:Key="SuccessColor">#3DFF6E</Color>
+        <Color x:Key="WarningColor">#FFA226</Color>
+        <Color x:Key="ErrorColor">#FF2950</Color>
+        <Color x:Key="InfoColor">#00D2FF</Color>
         
         <!-- ==================== Temperature Colors ==================== -->
         <Color x:Key="TempCold">#45C7FF</Color>
         <Color x:Key="TempWarm">#FFD700</Color>
-        <Color x:Key="TempHot">#FF9800</Color>
-        <Color x:Key="TempCritical">#E31837</Color>
+        <Color x:Key="TempHot">#FFA226</Color>
+        <Color x:Key="TempCritical">#FF2950</Color>
         
         <!-- ==================== Brushes ==================== -->
         <!-- Brand -->
+        <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource OmenCrimson}" />
         <SolidColorBrush x:Key="OmenBlueBrush" Color="{StaticResource OmenBlue}" />
         <SolidColorBrush x:Key="OmenRedBrush" Color="{StaticResource OmenRed}" />
         <SolidColorBrush x:Key="OmenGreenBrush" Color="{StaticResource OmenGreen}" />
@@ -76,8 +78,14 @@
         <SolidColorBrush x:Key="TempCriticalBrush" Color="{StaticResource TempCritical}" />
         
         <!-- Accent variants -->
-        <SolidColorBrush x:Key="AccentLightBrush" Color="#33CFFF" />
-        <SolidColorBrush x:Key="AccentDarkBrush" Color="#0099CC" />
-        <SolidColorBrush x:Key="AccentTransparentBrush" Color="#2600BFFF" />
+        <SolidColorBrush x:Key="AccentLightBrush" Color="#FF5C77" />
+        <SolidColorBrush x:Key="AccentDarkBrush" Color="#C71B3D" />
+        <SolidColorBrush x:Key="AccentTransparentBrush" Color="#26FF2950" />
+        
+        <!-- Accent gradient: OMEN crimson to ember orange -->
+        <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0%,0%" EndPoint="100%,100%">
+            <GradientStop Color="#FF2147" Offset="0" />
+            <GradientStop Color="#FF7A18" Offset="1" />
+        </LinearGradientBrush>
     </Application.Resources>
 </Application>

@@ -17,6 +17,16 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     private PerformanceMode? _lastFanFallbackMode;
     private OmenCore.Linux.Hardware.FanProfile _activeFanProfile = OmenCore.Linux.Hardware.FanProfile.Auto;
 
+    // Long-lived keyboard controller + software animation engine.
+    // Firmware has no native four-zone animations; effects are rendered by
+    // streaming frames to fourzone_color, like OGH Light Studio on Windows.
+    private readonly Lazy<OmenCore.Linux.Hardware.LinuxKeyboardController> _keyboardController =
+        new(() => new OmenCore.Linux.Hardware.LinuxKeyboardController());
+    private OmenCore.Linux.Hardware.KeyboardAnimationEngine? _animationEngine;
+
+    private OmenCore.Linux.Hardware.KeyboardAnimationEngine GetAnimationEngine() =>
+        _animationEngine ??= new OmenCore.Linux.Hardware.KeyboardAnimationEngine(_keyboardController.Value);
+
     // HP OMEN specific paths
     private const string HP_WMI_PATH = LinuxSysfsPathMap.HpWmiRoot;
     private const string HWMON_BASE = "/sys/class/hwmon";
@@ -260,10 +270,13 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         _capabilities.KeyboardBrightnessReason = _capabilities.SupportsKeyboardBrightness
             ? string.Empty
             : "Keyboard brightness sysfs path was not detected on this kernel/board.";
-        _capabilities.SupportsKeyboardAnimation = kbCtrl.HasFourZoneAnimationControl;
+        // Animations are software-rendered through fourzone_color; the
+        // firmware fourzone_animation node alone is not sufficient (no known
+        // board animates natively), but color streaming always works.
+        _capabilities.SupportsKeyboardAnimation = kbCtrl.HasFourZoneControl;
         _capabilities.KeyboardAnimationReason = _capabilities.SupportsKeyboardAnimation
             ? string.Empty
-            : "fourzone_animation sysfs path was not detected on this kernel/board.";
+            : "fourzone_color sysfs path was not detected on this kernel/board.";
 
         // Detect RGB capabilities — include fourzone_color for newer OMEN models
         _capabilities.HasFourZoneRgb = kbCtrl.HasFourZoneControl || DetectFourZoneRgbSupport();
@@ -861,7 +874,11 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
         await ExecuteWithIoLockAsync(() =>
         {
-            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+            // Manual color selection cancels any running animation, otherwise
+            // the next frame would immediately overwrite the user's color.
+            _animationEngine?.Stop(restoreBaseColors: false);
+
+            var ctrl = _keyboardController.Value;
             if (!ctrl.IsAvailable)
                 throw new NotSupportedException("Keyboard RGB interface is not available on this kernel/board.");
             if (!ctrl.SetAllZonesColor(r, g, b))
@@ -877,7 +894,11 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
         await ExecuteWithIoLockAsync(() =>
         {
-            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
+            // Manual color selection cancels any running animation, otherwise
+            // the next frame would immediately overwrite the user's color.
+            _animationEngine?.Stop(restoreBaseColors: false);
+
+            var ctrl = _keyboardController.Value;
             if (!ctrl.IsAvailable)
                 throw new NotSupportedException("Keyboard RGB interface is not available on this kernel/board.");
             if (!ctrl.SetZoneColor(zone, r, g, b))
@@ -893,8 +914,16 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
         return await ExecuteWithIoLockAsync(() =>
         {
-            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
-            return Task.FromResult(ctrl.GetAnimationMode());
+            // Software engine state takes precedence; the firmware node has
+            // no reliable readback for animations.
+            var mode = _animationEngine?.ActiveEffect switch
+            {
+                OmenCore.Linux.Hardware.KeyboardAnimationEffect.Breathing => 1,
+                OmenCore.Linux.Hardware.KeyboardAnimationEffect.Wave => 2,
+                OmenCore.Linux.Hardware.KeyboardAnimationEffect.Spectrum => 3,
+                _ => 0,
+            };
+            return Task.FromResult(mode);
         });
     }
 
@@ -905,16 +934,41 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
         await ExecuteWithIoLockAsync(() =>
         {
-            var ctrl = new OmenCore.Linux.Hardware.LinuxKeyboardController();
-            if (!ctrl.HasFourZoneAnimationControl)
-                throw new NotSupportedException("Keyboard animation control is not available on this kernel/board.");
+            var ctrl = _keyboardController.Value;
+            if (!ctrl.HasFourZoneControl)
+                throw new NotSupportedException("Keyboard animation requires the fourzone_color interface, which is not available on this kernel/board.");
 
-            var value = Math.Clamp(mode, 0, 255);
-            if (!ctrl.SetAnimationMode((byte)value))
-                throw new InvalidOperationException($"Failed to set keyboard animation mode {value}.");
+            switch (Math.Clamp(mode, 0, 255))
+            {
+                case 0: // Static — stop animating, restore pre-animation colors
+                    _animationEngine?.Stop(restoreBaseColors: true);
+                    break;
+                case 1:
+                    StartEffect(OmenCore.Linux.Hardware.KeyboardAnimationEffect.Breathing);
+                    break;
+                case 2:
+                    StartEffect(OmenCore.Linux.Hardware.KeyboardAnimationEffect.Wave);
+                    break;
+                case 3:
+                    StartEffect(OmenCore.Linux.Hardware.KeyboardAnimationEffect.Spectrum);
+                    break;
+                case 255: // Off — stop animating and blank the keyboard
+                    _animationEngine?.Stop(restoreBaseColors: false);
+                    if (!ctrl.SetAllZonesColor(0, 0, 0))
+                        throw new InvalidOperationException("Failed to turn keyboard lighting off.");
+                    break;
+                default:
+                    throw new NotSupportedException($"Unknown keyboard animation mode {mode}.");
+            }
 
             return Task.CompletedTask;
         });
+    }
+
+    private void StartEffect(OmenCore.Linux.Hardware.KeyboardAnimationEffect effect)
+    {
+        if (!GetAnimationEngine().Start(effect))
+            throw new InvalidOperationException($"Failed to start {effect} keyboard animation.");
     }
 
     #region Private Helpers
@@ -1653,6 +1707,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         {
             _pollingTimer.Stop();
             _pollingTimer.Dispose();
+            _animationEngine?.Dispose();
             _ioLock.Dispose();
             _disposed = true;
         }

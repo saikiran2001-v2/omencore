@@ -137,6 +137,36 @@ public class LinuxKeyboardController
     }
 
     /// <summary>
+    /// Read the current colors of all 4 zones from fourzone_color.
+    /// </summary>
+    public bool TryGetAllZoneColors(out (byte R, byte G, byte B)[] colors)
+    {
+        colors = new (byte, byte, byte)[4];
+        if (!HasFourZoneControl)
+            return false;
+
+        try
+        {
+            var hex = File.ReadAllText(FourZoneColorPath).Trim();
+            if (hex.Length < 24)
+                return false;
+
+            for (int z = 0; z < 4; z++)
+            {
+                colors[z] = (
+                    Convert.ToByte(hex.Substring(z * 6 + 0, 2), 16),
+                    Convert.ToByte(hex.Substring(z * 6 + 2, 2), 16),
+                    Convert.ToByte(hex.Substring(z * 6 + 4, 2), 16));
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Set all 4 zones to individual colors in a single sysfs write (fourzone only).
     /// </summary>
     public bool SetAllZoneColors(byte r0, byte g0, byte b0,

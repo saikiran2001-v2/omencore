@@ -140,13 +140,15 @@ public partial class SystemControlViewModel : ObservableObject
     /// <summary>
     /// Per-zone base colors. Brightness scaling is applied on write so
     /// these always store the full-brightness target, not the hardware value.
+    /// Physical mapping on the OMEN 4-zone keyboard (left to right):
+    /// Zone 3 (left edge) | Zone 4 (WASD) | Zone 2 (middle) | Zone 1 (right + numpad).
     /// </summary>
     public ZoneColorViewModel[] ZoneColors { get; } =
     {
-        new("Zone 1"),
-        new("Zone 2"),
-        new("Zone 3"),
-        new("Zone 4"),
+        new("Zone 1 — Right / Numpad"),
+        new("Zone 2 — Middle"),
+        new("Zone 3 — Left Edge"),
+        new("Zone 4 — WASD"),
     };
 
     public SystemControlViewModel(IHardwareService hardwareService)
@@ -324,6 +326,10 @@ public partial class SystemControlViewModel : ObservableObject
                     return;
                 }
             }
+
+            // Manual color writes cancel any running software animation in the
+            // hardware service — reflect that in the animation selector.
+            UpdateKeyboardAnimationSelection(0);
         }
         else if (_canSetKeyboardBrightness)
         {

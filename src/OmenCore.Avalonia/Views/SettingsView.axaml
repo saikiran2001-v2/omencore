@@ -5,36 +5,38 @@
              x:DataType="vm:SettingsViewModel">
     
     <ScrollViewer>
-        <StackPanel Spacing="16">
+        <StackPanel Spacing="14" MaxWidth="1150">
             
             <!-- Page Header -->
-            <StackPanel>
+            <StackPanel Spacing="4" Margin="0,0,0,6">
+                <TextBlock Classes="kicker" Text="CONFIGURATION" />
                 <TextBlock Classes="pageHeader" Text="Settings" />
-                <TextBlock Classes="label" Text="Application configuration and preferences" Margin="0,4,0,0" />
+                <TextBlock Classes="label" Text="Application configuration and preferences" Margin="0,2,0,0" />
             </StackPanel>
             
-            <!-- Startup Settings Card -->
+            <!-- Startup -->
             <Border Classes="card">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="🚀" FontSize="20" VerticalAlignment="Center" />
-                        <TextBlock Classes="sectionHeader" Text="Startup" VerticalAlignment="Center" Margin="0" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
+                        <Rectangle Classes="accentBar" Height="16" />
+                        <TextBlock Classes="sectionHeader" Text="Startup" VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBlock Classes="caption" Text="Control how OmenCore starts and behaves on system boot" Margin="0,4,0,16" />
+                    <TextBlock Classes="caption" Margin="13,0,0,14"
+                               Text="Control how OmenCore starts and behaves on system boot" />
                     
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12" Margin="0,0,0,8">
+                    <Border Classes="inner" Margin="0,0,0,8">
                         <ToggleSwitch IsChecked="{Binding StartWithSystem}"
                                       OnContent="Start OmenCore when system boots"
                                       OffContent="Manual start only" />
                     </Border>
                     
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12" Margin="0,0,0,8">
+                    <Border Classes="inner" Margin="0,0,0,8">
                         <ToggleSwitch IsChecked="{Binding StartMinimized}"
                                       OnContent="Start minimized to tray"
                                       OffContent="Start with window visible" />
                     </Border>
                     
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12">
+                    <Border Classes="inner">
                         <ToggleSwitch IsChecked="{Binding AutoApplyProfile}"
                                       OnContent="Auto-apply last profile on startup"
                                       OffContent="Start with default settings" />
@@ -42,28 +44,29 @@
                 </StackPanel>
             </Border>
             
-            <!-- Default Settings Card -->
+            <!-- Defaults -->
             <Border Classes="card">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="SET" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" />
-                        <TextBlock Classes="sectionHeader" Text="Defaults" VerticalAlignment="Center" Margin="0" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
+                        <Rectangle Classes="accentBar" Height="16" />
+                        <TextBlock Classes="sectionHeader" Text="Defaults" VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBlock Classes="caption" Text="Default behavior and polling configuration" Margin="0,4,0,16" />
+                    <TextBlock Classes="caption" Margin="13,0,0,14"
+                               Text="Default behavior and polling configuration" />
                     
-                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto">
-                        <Border Grid.Column="0" Background="#141414" CornerRadius="6" Padding="16,12" Margin="0,0,8,0">
+                    <Grid ColumnDefinitions="*,*">
+                        <Border Grid.Column="0" Classes="inner" Margin="0,0,7,0">
                             <StackPanel>
-                                <TextBlock Classes="label" Text="Default Performance Mode" Margin="0,0,0,8" />
+                                <TextBlock Classes="micro" Text="DEFAULT PERFORMANCE MODE" Margin="0,0,0,10" />
                                 <ComboBox ItemsSource="{Binding PerformanceModes}" 
                                           SelectedItem="{Binding DefaultPerformanceMode}"
                                           HorizontalAlignment="Stretch" />
                             </StackPanel>
                         </Border>
                         
-                        <Border Grid.Column="1" Background="#141414" CornerRadius="6" Padding="16,12" Margin="8,0,0,0">
+                        <Border Grid.Column="1" Classes="inner" Margin="7,0,0,0">
                             <StackPanel>
-                                <TextBlock Classes="label" Text="Sensor Polling Interval" Margin="0,0,0,8" />
+                                <TextBlock Classes="micro" Text="SENSOR POLLING INTERVAL" Margin="0,0,0,10" />
                                 <ComboBox ItemsSource="{Binding PollingIntervals}" 
                                           SelectedItem="{Binding PollingInterval}"
                                           HorizontalAlignment="Stretch" />
@@ -73,22 +76,23 @@
                 </StackPanel>
             </Border>
             
-            <!-- Power Management Card -->
+            <!-- Power Management -->
             <Border Classes="card">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="🔋" FontSize="20" VerticalAlignment="Center" />
-                        <TextBlock Classes="sectionHeader" Text="Power Management" VerticalAlignment="Center" Margin="0" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
+                        <Rectangle Classes="accentBar" Height="16" />
+                        <TextBlock Classes="sectionHeader" Text="Power Management" VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBlock Classes="caption" Text="Adjust behavior when running on battery power" Margin="0,4,0,16" />
+                    <TextBlock Classes="caption" Margin="13,0,0,14"
+                               Text="Adjust behavior when running on battery power" />
                     
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12" Margin="0,0,0,8">
+                    <Border Classes="inner" Margin="0,0,0,8">
                         <ToggleSwitch IsChecked="{Binding BatteryAwareFans}"
                                       OnContent="Auto-quiet fans when on battery"
                                       OffContent="Same fan profile on battery" />
                     </Border>
                     
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12">
+                    <Border Classes="inner">
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <TextBlock Classes="label" Text="Battery fan speed reduction:" VerticalAlignment="Center" />
                             <ComboBox ItemsSource="{Binding BatteryReductionOptions}" 
@@ -100,16 +104,17 @@
                 </StackPanel>
             </Border>
             
-            <!-- Notifications Card -->
+            <!-- Notifications -->
             <Border Classes="card">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="🔔" FontSize="20" VerticalAlignment="Center" />
-                        <TextBlock Classes="sectionHeader" Text="Notifications" VerticalAlignment="Center" Margin="0" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
+                        <Rectangle Classes="accentBar" Height="16" />
+                        <TextBlock Classes="sectionHeader" Text="Notifications" VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBlock Classes="caption" Text="Desktop notification preferences" Margin="0,4,0,16" />
+                    <TextBlock Classes="caption" Margin="13,0,0,14"
+                               Text="Desktop notification preferences" />
                     
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12">
+                    <Border Classes="inner">
                         <ToggleSwitch IsChecked="{Binding ShowNotifications}"
                                       OnContent="Show desktop notifications"
                                       OffContent="Notifications disabled" />
@@ -117,28 +122,28 @@
                 </StackPanel>
             </Border>
             
-            <!-- About Card -->
+            <!-- About -->
             <Border Classes="card">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="ℹ️" FontSize="20" VerticalAlignment="Center" />
-                        <TextBlock Classes="sectionHeader" Text="About OmenCore" VerticalAlignment="Center" Margin="0" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,14">
+                        <Rectangle Classes="accentBar" Height="16" />
+                        <TextBlock Classes="sectionHeader" Text="About OmenCore" VerticalAlignment="Center" />
                     </StackPanel>
                     
-                    <Border Background="#141414" CornerRadius="6" Padding="16,12" Margin="0,12,0,0">
+                    <Border Classes="inner">
                         <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel Grid.Column="0" Spacing="4">
+                            <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="Version:" Foreground="{DynamicResource SecondaryTextBrush}" />
-                                    <TextBlock Text="{Binding Version}" FontWeight="SemiBold" 
-                                               Foreground="{DynamicResource OmenBlueBrush}" />
+                                    <TextBlock Classes="micro" Text="VERSION" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Version}" FontSize="13" FontWeight="Bold" 
+                                               Foreground="#FF5C77" />
                                 </StackPanel>
                                 <TextBlock Classes="caption" Text="Open-source gaming laptop control for Linux" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Button Classes="secondary" Content="📁 Config Folder"
+                                <Button Classes="secondary" Content="Config Folder"
                                         Command="{Binding OpenConfigFolderCommand}" />
-                                <Button Classes="primary" Content="GitHub"
+                                <Button Classes="primary" Content="GITHUB"
                                         Command="{Binding OpenGitHubCommand}" />
                             </StackPanel>
                         </Grid>
@@ -149,9 +154,9 @@
             <!-- Status Message -->
             <Border Classes="infoBanner" 
                     IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="OK" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource OmenGreenBrush}" />
-                    <TextBlock Text="{Binding StatusMessage}" />
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Rectangle Width="3" Fill="{DynamicResource OmenGreenBrush}" RadiusX="1.5" RadiusY="1.5" />
+                    <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" />
                 </StackPanel>
             </Border>
             
@@ -163,7 +168,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                     <Button Classes="secondary" Content="Cancel" 
                             Command="{Binding CancelCommand}" />
-                    <Button Classes="primary" Content="Save Settings" 
+                    <Button Classes="primary" Content="SAVE SETTINGS" 
                             Command="{Binding SaveSettingsCommand}" />
                 </StackPanel>
             </Grid>
