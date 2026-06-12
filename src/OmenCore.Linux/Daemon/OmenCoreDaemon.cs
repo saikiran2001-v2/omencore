@@ -82,9 +82,8 @@ public class OmenCoreDaemon : IDisposable
             return;
         }
         
-        _isRunning = true;
-        
-        // Check prerequisites
+        // Check prerequisites before flagging the daemon as running, so an
+        // early exit doesn't leave _isRunning stuck at true.
         if (!LinuxEcController.CheckRootAccess())
         {
             Log("Error: Root privileges required");
@@ -102,6 +101,8 @@ public class OmenCoreDaemon : IDisposable
         {
             return;
         }
+
+        _isRunning = true;
         
         // Create PID file
         WritePidFile();
@@ -206,40 +207,41 @@ public class OmenCoreDaemon : IDisposable
             {
                 // Check battery state for low-overhead mode
                 UpdateLowOverheadMode();
-                
-                // If not using custom curve, just monitor and log
-                if (_fanCurveEngine == null)
+
+                // These safety/recovery policies must run regardless of whether
+                // the custom fan-curve engine is driving the fans. Previously the
+                // whole block was skipped in curve mode, disabling the thermal
+                // restore, performance hold and reliability snapshots entirely.
+                var cpuTemp = _ec.GetCpuTemperature() ?? _hwmon.GetCpuTemperature() ?? 0;
+                var gpuTemp = _ec.GetGpuTemperature() ?? _hwmon.GetGpuTemperature() ?? 0;
+                var (fan1, fan2) = _ec.GetFanSpeeds();
+
+                // Thermal watchdog: re-apply performance mode if BIOS reset it after throttle
+                if (_config.Thermal.RestorePerformanceAfterThrottle)
                 {
-                    var cpuTemp = _ec.GetCpuTemperature() ?? _hwmon.GetCpuTemperature() ?? 0;
-                    var gpuTemp = _ec.GetGpuTemperature() ?? _hwmon.GetGpuTemperature() ?? 0;
-                    var (fan1, fan2) = _ec.GetFanSpeeds();
-                    
-                    // Thermal watchdog: re-apply performance mode if BIOS reset it after throttle
-                    if (_config.Thermal.RestorePerformanceAfterThrottle)
-                    {
-                        CheckAndRestorePerformanceMode(cpuTemp);
-                    }
-
-                    CheckAndHoldPerformanceMode();
-                    CheckReliabilityPolicies(cpuTemp, gpuTemp, fan1, fan2);
-                    WriteReliabilitySnapshot(cpuTemp, gpuTemp, fan1, fan2);
-
-                    // Log periodically (less often in low-overhead mode)
-                    logCounter++;
-                    var logInterval = _lowOverheadMode ? 60 : 30;
-                    var pollInterval = GetEffectivePollInterval();
-                    
-                    if (logCounter * pollInterval / 1000 >= logInterval)
-                    {
-                        if (!_lowOverheadMode || !_config.General.LowOverhead.ReduceLogging)
-                        {
-                            var batteryStr = _lowOverheadMode ? $" [Battery {_battery.GetBatteryPercentage()}%]" : "";
-                            Log($"Status: CPU {cpuTemp}°C, GPU {gpuTemp}°C, Fans {fan1}/{fan2} RPM{batteryStr}");
-                        }
-                        logCounter = 0;
-                    }
+                    CheckAndRestorePerformanceMode(cpuTemp);
                 }
-                
+
+                CheckAndHoldPerformanceMode();
+                await CheckReliabilityPoliciesAsync(cpuTemp, gpuTemp, fan1, fan2);
+                WriteReliabilitySnapshot(cpuTemp, gpuTemp, fan1, fan2);
+
+                // Log periodically (less often in low-overhead mode)
+                logCounter++;
+                var logInterval = _lowOverheadMode ? 60 : 30;
+                var pollInterval = GetEffectivePollInterval();
+
+                if (logCounter * pollInterval / 1000 >= logInterval)
+                {
+                    if (!_lowOverheadMode || !_config.General.LowOverhead.ReduceLogging)
+                    {
+                        var batteryStr = _lowOverheadMode ? $" [Battery {_battery.GetBatteryPercentage()}%]" : "";
+                        var curveStr = _fanCurveEngine != null ? " [custom curve]" : "";
+                        Log($"Status: CPU {cpuTemp}°C, GPU {gpuTemp}°C, Fans {fan1}/{fan2} RPM{batteryStr}{curveStr}");
+                    }
+                    logCounter = 0;
+                }
+
                 await Task.Delay(GetEffectivePollInterval(), _cts.Token);
             }
             catch (OperationCanceledException)
@@ -430,7 +432,7 @@ public class OmenCoreDaemon : IDisposable
         }
     }
 
-    private void CheckReliabilityPolicies(int cpuTemp, int gpuTemp, int fan1, int fan2)
+    private async Task CheckReliabilityPoliciesAsync(int cpuTemp, int gpuTemp, int fan1, int fan2)
     {
         if (!_config.Reliability.Enabled)
         {
@@ -439,7 +441,7 @@ public class OmenCoreDaemon : IDisposable
 
         var onBattery = _battery.IsOnBattery();
         CheckAcBatteryOneShotAutomation(onBattery);
-        CheckStuckFanWatchdog(cpuTemp, gpuTemp, fan1, fan2, onBattery);
+        await CheckStuckFanWatchdogAsync(cpuTemp, gpuTemp, fan1, fan2, onBattery);
     }
 
     private void CheckAcBatteryOneShotAutomation(bool onBattery)
@@ -477,10 +479,18 @@ public class OmenCoreDaemon : IDisposable
         }
     }
 
-    private void CheckStuckFanWatchdog(int cpuTemp, int gpuTemp, int fan1, int fan2, bool onBattery)
+    private async Task CheckStuckFanWatchdogAsync(int cpuTemp, int gpuTemp, int fan1, int fan2, bool onBattery)
     {
         if (!_config.Reliability.StuckFanWatchdogEnabled)
         {
+            return;
+        }
+
+        // The custom curve engine owns the fans; a max->auto kick here would
+        // knock the EC out of manual mode and fight the curve writes.
+        if (_fanCurveEngine != null)
+        {
+            _watchdogConsecutiveHits = 0;
             return;
         }
 
@@ -524,7 +534,7 @@ public class OmenCoreDaemon : IDisposable
         _lastWatchdogReason = reason;
 
         var kickSucceeded = _ec.SetFanProfile(FanProfile.Max);
-        Thread.Sleep(400);
+        await Task.Delay(400, _cts.Token);
         kickSucceeded = _ec.SetFanProfile(FanProfile.Auto) && kickSucceeded;
 
         _lastWatchdogKickUtc = DateTime.UtcNow;
@@ -561,7 +571,7 @@ public class OmenCoreDaemon : IDisposable
             SingleWriterEnabled = _config.Reliability.ForceSingleWriter,
             SingleWriterActive = _singleWriterLockHandle != null,
             WriterOwner = ReliabilityDiagnosticsStore.ReadSingleWriterOwner() ?? string.Empty,
-            FanProfile = _configuredFanProfile.ToString().ToLowerInvariant(),
+            FanProfile = _fanCurveEngine != null ? "custom" : _configuredFanProfile.ToString().ToLowerInvariant(),
             WatchdogEnabled = _config.Reliability.StuckFanWatchdogEnabled,
             WatchdogTrips = _watchdogTrips,
             LastWatchdogKickUnix = _lastWatchdogKickUtc == DateTime.MinValue ? 0 : new DateTimeOffset(_lastWatchdogKickUtc).ToUnixTimeSeconds(),

@@ -90,19 +90,20 @@ public class ConfigurationService : IConfigurationService
         await File.WriteAllTextAsync(_configPath, sb.ToString());
     }
 
+    private static Dictionary<string, object> CreateDefaults() => new()
+    {
+        ["start_minimized"] = false,
+        ["dark_theme"] = true,
+        ["polling_interval_ms"] = 1000,
+        ["auto_apply_profile"] = true,
+        ["default_performance_mode"] = "default"
+    };
+
     public async Task LoadAsync()
     {
         if (!File.Exists(_configPath))
         {
-            // Create default config
-            _config = new Dictionary<string, object>
-            {
-                ["start_minimized"] = false,
-                ["dark_theme"] = true,
-                ["polling_interval_ms"] = 1000,
-                ["auto_apply_profile"] = true,
-                ["default_performance_mode"] = "default"
-            };
+            _config = CreateDefaults();
             await SaveAsync();
             return;
         }
@@ -140,8 +141,9 @@ public class ConfigurationService : IConfigurationService
         }
         catch
         {
-            // Use defaults on parse error
-            await LoadAsync();
+            // Unreadable/corrupt file: fall back to defaults instead of
+            // re-reading the same broken file (previously recursed forever).
+            _config = CreateDefaults();
         }
     }
 }

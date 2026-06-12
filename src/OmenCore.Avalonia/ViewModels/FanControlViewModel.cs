@@ -158,8 +158,8 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         CpuFanRpm = status.CpuFanRpm;
         GpuFanRpm = status.GpuFanRpm;
 
-        CpuFanPercent = Math.Min(100, (int)(CpuFanRpm / 60.0));
-        GpuFanPercent = Math.Min(100, (int)(GpuFanRpm / 60.0));
+        CpuFanPercent = status.CpuFanPercent;
+        GpuFanPercent = status.GpuFanPercent;
 
         if (IsAutoSwitchEnabled && HasFanProfileAccess)
             _ = RunAutoSwitchAsync(Math.Max(CpuTemperature, GpuTemperature));

@@ -36,6 +36,9 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     private const string HP_WMI_FAN2_OUTPUT = "/sys/devices/platform/hp-wmi/fan2_output";
     private const string HP_WMI_FAN_ALWAYS_ON = "/sys/devices/platform/hp-wmi/fan_always_on";
     private const string RaplPl1Path = "/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw";
+
+    /// <summary>Assumed full-speed RPM used only when pwm duty is unreadable.</summary>
+    private const double FallbackMaxFanRpm = 5500.0;
     private static readonly string[] PowerProfilesCtlCandidates =
     {
         "/usr/bin/powerprofilesctl",
@@ -137,6 +140,16 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             // Read fan speeds
             status.CpuFanRpm = await ReadFanRpmAsync("cpu");
             status.GpuFanRpm = await ReadFanRpmAsync("gpu");
+
+            // Fan duty: hp-wmi exposes a single pwm channel for both fans.
+            // Fall back to an RPM-based estimate when pwm1 is unavailable.
+            var fanDuty = await ReadFanDutyPercentAsync();
+            status.CpuFanPercent = fanDuty >= 0
+                ? fanDuty
+                : Math.Clamp((int)Math.Round(status.CpuFanRpm * 100.0 / FallbackMaxFanRpm), 0, 100);
+            status.GpuFanPercent = fanDuty >= 0
+                ? fanDuty
+                : Math.Clamp((int)Math.Round(status.GpuFanRpm * 100.0 / FallbackMaxFanRpm), 0, 100);
 
             // Read CPU/memory usage from /proc
             status.CpuUsage = await ReadCpuUsageAsync();
@@ -1240,68 +1253,72 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
     private static async Task<int> ReadFanRpmAsync(string type)
     {
+        // fan1 = CPU, fan2 = GPU on hp-wmi (and the common convention elsewhere).
+        var fanIndex = type.Equals("gpu", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+
         try
         {
-            foreach (var hwmon in Directory.GetDirectories(HWMON_BASE))
+            // Prefer the hp-wmi hwmon device — its readings are authoritative
+            // and 0 RPM is a real value there (fan-stop), not a missing sensor.
+            foreach (var hwmonDir in LinuxSysfsPathMap.EnumerateHpWmiHwmonDirectories())
             {
-                try
-                {
-                    // Check if this hwmon is related to the requested type
-                    var namePath = Path.Combine(hwmon, "name");
-                    var deviceName = File.Exists(namePath) ? 
-                        (await File.ReadAllTextAsync(namePath)).Trim().ToLower() : "";
-                    
-                    // Look for fan speed inputs
-                    var fanInputs = Directory.GetFiles(hwmon, "fan*_input");
-                    if (fanInputs.Length == 0)
-                    {
-                        // Some HP laptops expose fans via PWM files
-                        fanInputs = Directory.GetFiles(hwmon, "pwm*");
-                    }
-                    
-                    foreach (var fanInput in fanInputs)
-                    {
-                        var rpm = await File.ReadAllTextAsync(fanInput);
-                        if (int.TryParse(rpm.Trim(), out var rpmValue) && rpmValue > 0)
-                            return rpmValue;
-                    }
-                }
-                catch { }
+                var rpm = await TryReadRpmAsync(Path.Combine(hwmonDir, $"fan{fanIndex}_input"));
+                if (rpm >= 0)
+                    return rpm;
             }
-            
-            // Try HP-specific fan paths
-            var hpFanPaths = new[]
+
+            // Fallback: any hwmon that exposes the requested fan index.
+            // Note: pwm* files are 0-255 duty cycle, never valid as RPM.
+            if (Directory.Exists(HWMON_BASE))
             {
-                "/sys/devices/platform/hp-wmi/fan1_input",
-                "/sys/devices/platform/hp-wmi/fan2_input",
-                "/sys/class/hwmon/hwmon*/fan1_input"
-            };
-            
-            foreach (var fanPath in hpFanPaths)
-            {
-                if (fanPath.Contains("*"))
+                foreach (var hwmon in Directory.GetDirectories(HWMON_BASE))
                 {
-                    var matches = Directory.GetFiles(Path.GetDirectoryName(fanPath) ?? "", Path.GetFileName(fanPath));
-                    foreach (var match in matches)
-                    {
-                        if (File.Exists(match))
-                        {
-                            var rpm = await File.ReadAllTextAsync(match);
-                            if (int.TryParse(rpm.Trim(), out var rpmValue) && rpmValue > 0)
-                                return rpmValue;
-                        }
-                    }
-                }
-                else if (File.Exists(fanPath))
-                {
-                    var rpm = await File.ReadAllTextAsync(fanPath);
-                    if (int.TryParse(rpm.Trim(), out var rpmValue) && rpmValue > 0)
-                        return rpmValue;
+                    var rpm = await TryReadRpmAsync(Path.Combine(hwmon, $"fan{fanIndex}_input"));
+                    if (rpm > 0)
+                        return rpm;
                 }
             }
         }
         catch { }
         return 0;
+    }
+
+    private static async Task<int> TryReadRpmAsync(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+                return -1;
+            var raw = await File.ReadAllTextAsync(path);
+            return int.TryParse(raw.Trim(), out var rpm) && rpm >= 0 ? rpm : -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// Reads the current fan duty cycle from the hp-wmi pwm1 node (0-255) as a
+    /// percentage. The driver reports the duty derived from live RPM, so this is
+    /// valid in auto, manual and max modes. Returns -1 when unavailable.
+    /// </summary>
+    private static async Task<int> ReadFanDutyPercentAsync()
+    {
+        try
+        {
+            foreach (var hwmonDir in LinuxSysfsPathMap.EnumerateHpWmiHwmonDirectories())
+            {
+                var pwmPath = Path.Combine(hwmonDir, "pwm1");
+                if (!File.Exists(pwmPath))
+                    continue;
+                var raw = await File.ReadAllTextAsync(pwmPath);
+                if (int.TryParse(raw.Trim(), out var duty) && duty >= 0)
+                    return Math.Clamp((int)Math.Round(duty * 100.0 / 255.0), 0, 100);
+            }
+        }
+        catch { }
+        return -1;
     }
 
     private static async Task<double> ReadCpuUsageAsync()
