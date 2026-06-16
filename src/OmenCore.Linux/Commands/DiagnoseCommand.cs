@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using OmenCore.Linux.Config;
+using OmenCore.Linux.Daemon;
 using OmenCore.Linux.Hardware;
 
 namespace OmenCore.Linux.Commands;
@@ -992,7 +993,7 @@ public class DiagnoseInfo
 public class LinuxServiceDiagnostics
 {
     public const string DefaultUnitPath = "/etc/systemd/system/omencore.service";
-    public const string DefaultBundleExtractDir = "/var/tmp/omencore";
+    public const string DefaultBundleExtractDir = ReliabilityDiagnosticsStore.DiagnosticsDirPath;
 
     public bool SystemdAvailable { get; set; }
     public bool UnitInstalled { get; set; }

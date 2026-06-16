@@ -5,9 +5,9 @@ namespace OmenCore.Linux.Daemon;
 public static class ReliabilityDiagnosticsStore
 {
     public const string SingleWriterLockPath = "/var/run/omencore-single-writer.lock";
-    public const string DiagnosticsDirPath = "/var/tmp/omencore";
-    public const string SnapshotPath = "/var/tmp/omencore/reliability-status.json";
-    public const string LogPath = "/var/tmp/omencore/reliability.log";
+    public const string DiagnosticsDirPath = "/var/lib/omencore";
+    public const string SnapshotPath = "/var/lib/omencore/reliability-status.json";
+    public const string LogPath = "/var/lib/omencore/reliability.log";
     public const string DaemonWriterRole = "daemon";
     public const string WriterRoleEnvVar = "OMENCORE_WRITER_ROLE";
 

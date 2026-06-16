@@ -160,7 +160,7 @@ public static class DaemonCommand
         var extractDir = Environment.GetEnvironmentVariable("DOTNET_BUNDLE_EXTRACT_BASE_DIR");
         if (string.IsNullOrEmpty(extractDir))
         {
-            extractDir = "/var/tmp/omencore";
+            extractDir = ReliabilityDiagnosticsStore.DiagnosticsDirPath;
             Environment.SetEnvironmentVariable("DOTNET_BUNDLE_EXTRACT_BASE_DIR", extractDir);
             WriteColor(ConsoleColor.Yellow, $"Warning: DOTNET_BUNDLE_EXTRACT_BASE_DIR not set; using {extractDir}");
             Console.WriteLine("To fix permanently: sudo omencore-cli daemon --install");
@@ -191,8 +191,21 @@ public static class DaemonCommand
         return Process.GetCurrentProcess().MainModule?.FileName ?? "/usr/local/bin/omencore-cli";
     }
 
+    private static string BuildReadWritePaths()
+    {
+        // systemd fails to start (exit 226/NAMESPACE) if ReadWritePaths lists a path that
+        // does not exist. StateDirectory=omencore creates /var/lib/omencore before namespacing.
+        // Only include /sys/kernel/debug/ec when ec_sys/debugfs is present.
+        var paths = new List<string> { "/var/run", "/var/log" };
+        if (Directory.Exists("/sys/kernel/debug/ec"))
+            paths.Add("/sys/kernel/debug/ec");
+        return string.Join(' ', paths);
+    }
+
     private static string BuildSystemdService(string exePath)
     {
+        var extractDir = ReliabilityDiagnosticsStore.DiagnosticsDirPath;
+        var readWritePaths = BuildReadWritePaths();
         return $@"[Unit]
 Description=OmenCore HP OMEN Laptop Control Daemon
 Documentation=https://github.com/theantipopau/omencore
@@ -200,20 +213,20 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStartPre=-/usr/bin/mkdir -p /var/tmp/omencore
+StateDirectory=omencore
 ExecStart={exePath} daemon --run
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 User=root
 Environment=HOME=/root
-Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/tmp/omencore
-Environment=TMPDIR=/var/tmp/omencore
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR={extractDir}
+Environment=TMPDIR={extractDir}
 
 # Security hardening
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/run /var/log /sys/kernel/debug/ec /var/tmp/omencore
+ReadWritePaths={readWritePaths}
 NoNewPrivileges=false
 PrivateTmp=true
 
@@ -232,6 +245,7 @@ WantedBy=multi-user.target
 
         try
         {
+            Directory.CreateDirectory(ReliabilityDiagnosticsStore.DiagnosticsDirPath);
             await File.WriteAllTextAsync(SystemdServicePath, BuildSystemdService(GetCurrentExecutablePath()));
 
             if (!Directory.Exists(SystemConfigDir))
@@ -247,6 +261,14 @@ WantedBy=multi-user.target
             WriteColor(ConsoleColor.Green, "OmenCore systemd service installed.");
             Console.WriteLine($"Configuration: {OmenCoreConfig.SystemConfigPath}");
             Console.WriteLine($"Service file:  {SystemdServicePath}");
+            if (!Directory.Exists("/sys/kernel/debug/ec"))
+            {
+                Console.WriteLine();
+                WriteColor(ConsoleColor.Yellow,
+                    "Note: /sys/kernel/debug/ec not found — omitted from ReadWritePaths.");
+                Console.WriteLine("      Modern OMEN models use hp-wmi and do not need this path.");
+                Console.WriteLine("      For ec_sys access: load the module, then re-run daemon --install.");
+            }
             Console.WriteLine();
             Console.WriteLine("Next steps:");
             Console.WriteLine("  sudo omencore-cli daemon --start");
