@@ -49,7 +49,7 @@
 
 See the [Full Installation Guide](INSTALL.md#-windows-installation).
 
-### Linux (CachyOS • Arch • Ubuntu • Fedora)
+### Linux (CachyOS • Arch • Ubuntu • Fedora • Debian • Pika OS)
 
 ```bash
 # Replace VERSION with the published release you want to install.
@@ -64,10 +64,58 @@ chmod +x omencore-cli omencore-gui
 sudo ./omencore-cli status
 
 # GUI: Launch Avalonia
-sudo ./omencore-gui
+./omencore-gui
 ```
 
 See the [Complete Linux Guide](docs/LINUX_INSTALL_GUIDE.md) or the [Quick Reference](INSTALL.md#-linux-installation).
+
+### Switching Linux distros (OMEN Slim / four-zone RGB)
+
+If keyboard lighting worked on one distro (e.g. CachyOS) but not after moving to another
+(e.g. Debian, Ubuntu, Pika OS), the driver is usually fine — setup steps are easy to miss
+on a fresh install. Work through this checklist:
+
+1. **Install the enhanced `hp-wmi` DKMS module** (2023+ OMEN / Victus boards such as `8D40`):
+   ```bash
+   # Debian / Ubuntu / Pika OS
+   sudo apt install dkms build-essential linux-headers-$(uname -r)
+
+   # Arch / CachyOS
+   sudo pacman -S dkms linux-headers
+   ```
+   Then install [hp-omen-dkms](https://github.com/saikiran2001-v2/hp-omen-dkms) using version
+   **1.1.0** from its `dkms.conf` (not 1.0.0):
+   ```bash
+   sudo dkms add .
+   sudo dkms install hp-wmi/1.1.0
+   sudo modprobe -r hp_wmi && sudo modprobe hp_wmi
+   modinfo -n hp_wmi   # should point at .../updates/dkms/hp-wmi.ko
+   ```
+
+2. **Install the udev rule** so the GUI can write sysfs without sudo:
+   ```bash
+   sudo cp scripts/99-omencore-hp-wmi.rules /etc/udev/rules.d/
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger --subsystem-match=platform --action=change
+   ls -l /sys/devices/platform/hp-wmi/fourzone_*   # should show rw-rw-rw-
+   ```
+
+3. **Check the hardware brightness gate** — four-zone keyboards expose both
+   `fourzone_color` and `fourzone_brightness`. Colors can be set while brightness stays
+   at `0`, which leaves the keyboard physically off:
+   ```bash
+   cat /sys/devices/platform/hp-wmi/fourzone_brightness   # must not be 0
+   omencore-cli keyboard --brightness 100
+   omencore-cli keyboard --color 00BFFF
+   ```
+
+4. **Verify nodes exist** before blaming the distro or kernel:
+   ```bash
+   ls /sys/devices/platform/hp-wmi/fourzone_*
+   omencore-cli keyboard
+   ```
+
+Full walkthrough: [Linux install guide — Distro hopping](docs/LINUX_INSTALL_GUIDE.md#distro-hopping-checklist-four-zone-keyboard-rgb).
 
 ### Linux issue reporting (one-command triage bundle)
 
@@ -342,7 +390,8 @@ dotnet test OmenCore.sln --collect:"XPlat Code Coverage"
 | Undervolting not working | MSR locked in BIOS | Check BIOS overclocking settings; verify with Intel XTU |
 | Auto-update fails | SHA256 missing from release notes | Download manually from the Releases page |
 | High CPU at idle | Charts polling too aggressively | Enable Low Overhead Mode in Dashboard settings |
-| Linux: permission denied | Hardware access needs root | Run with `sudo` |
+| Linux: permission denied | Hardware access needs root or udev rules | Install `scripts/99-omencore-hp-wmi.rules`; see [distro hopping](#switching-linux-distros-omen-slim--four-zone-rgb) |
+| Linux: keyboard RGB set but no light | `fourzone_brightness` is 0 | `omencore-cli keyboard --brightness 100` then set color |
 | Linux: ec_sys not found | Module not in this kernel | Use `hp-wmi` on 2023+ models |
 
 Detailed logs are in `%LOCALAPPDATA%\OmenCore\`. On Linux, use `sudo omencore-cli --report > report.txt` for a diagnostics bundle.

@@ -20,6 +20,7 @@ Complete guide for installing and running OmenCore on Linux distributions. OmenC
 - [Configuration](#configuration)
 - [Fan Control Methods](#fan-control-methods)
 - [Supported Models & Features](#supported-models--features)
+- [Distro hopping checklist (four-zone keyboard RGB)](#distro-hopping-checklist-four-zone-keyboard-rgb)
 - [Troubleshooting](#troubleshooting)
 - [Uninstallation](#uninstallation)
 
@@ -687,6 +688,142 @@ This will show:
 - Accessible sysfs paths
 - Recommended fan control method
 - Feature compatibility matrix
+
+---
+
+## Distro hopping checklist (four-zone keyboard RGB)
+
+Moving from Arch/CachyOS to Debian/Ubuntu/Pika OS (or any other distro) often
+looks like a kernel or driver regression when it is actually missing post-install
+setup. The same laptop and DKMS module can work on both — these steps are what
+matter on a fresh system.
+
+Tested reference hardware: **OMEN Slim 16-an0xxx** (board `8D40`, four-zone RGB).
+
+### 1. Enhanced `hp-wmi` via DKMS
+
+Stock in-tree `hp_wmi` on many kernels does not expose `fourzone_color`,
+`fourzone_brightness`, or `fourzone_animation`. Install the community DKMS
+package instead:
+
+| Distro family | Packages |
+|---------------|----------|
+| Debian / Ubuntu / Pika OS | `dkms`, `build-essential`, `linux-headers-$(uname -r)` |
+| Arch / CachyOS / Manjaro | `dkms`, `linux-headers` (or `linux-headers-$(uname -r)`) |
+| Fedora | `dkms`, `kernel-devel-$(uname -r)`, `gcc`, `make` |
+
+```bash
+git clone https://github.com/saikiran2001-v2/hp-omen-dkms.git
+cd hp-omen-dkms
+
+# Version is in dkms.conf — currently 1.1.0
+sudo dkms add .
+sudo dkms install hp-wmi/1.1.0
+sudo modprobe -r hp_wmi && sudo modprobe hp_wmi
+
+# Confirm DKMS build is active (not the stock module)
+modinfo -n hp_wmi
+ls /sys/devices/platform/hp-wmi/fourzone_*
+```
+
+After kernel upgrades, DKMS should rebuild automatically (`AUTOINSTALL=yes` in
+`dkms.conf`). If not:
+
+```bash
+sudo dkms install hp-wmi/1.1.0 -k $(uname -r)
+```
+
+### 2. Udev rule for non-root GUI access
+
+Four-zone sysfs files are created as `root:root` mode `644`. OmenCore's GUI runs
+as your user and writes directly to:
+
+- `/sys/devices/platform/hp-wmi/fourzone_color`
+- `/sys/devices/platform/hp-wmi/fourzone_brightness`
+- `/sys/devices/platform/hp-wmi/fourzone_animation`
+
+On CachyOS you may already have had this rule; Debian-based installs usually do
+not. Install it from this repository:
+
+```bash
+sudo cp scripts/99-omencore-hp-wmi.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=platform --action=change
+```
+
+Verify:
+
+```bash
+ls -l /sys/devices/platform/hp-wmi/fourzone_*
+# expected: rw-rw-rw-  root root  ... fourzone_color
+```
+
+Without this rule, lighting may appear broken in the GUI even when
+`sudo omencore-cli keyboard` works.
+
+### 3. Hardware brightness gate (`fourzone_brightness`)
+
+Four-zone OMEN keyboards use **two** sysfs controls:
+
+| Node | Purpose |
+|------|---------|
+| `fourzone_color` | Per-zone RGB (24 hex chars: 4 zones × RRGGBB) |
+| `fourzone_brightness` | Hardware brightness gate (0–255) |
+
+Firmware often starts with `fourzone_brightness = 0` on a new distro install.
+OmenCore can write colors successfully while the keyboard stays physically off.
+
+Check:
+
+```bash
+cat /sys/devices/platform/hp-wmi/fourzone_brightness
+cat /sys/devices/platform/hp-wmi/fourzone_color
+```
+
+Fix:
+
+```bash
+omencore-cli keyboard --brightness 100
+omencore-cli keyboard --color 00BFFF
+```
+
+Or in one step:
+
+```bash
+omencore-cli keyboard --color 00BFFF --brightness 100
+```
+
+**Note:** `omencore-cli keyboard --color` alone does not raise
+`fourzone_brightness`. If lighting goes dark after `--off` or a suspend cycle,
+run `--brightness 100` again.
+
+### 4. Quick verification
+
+```bash
+omencore-cli keyboard
+# Should show: Available: Yes, 4-Zone Brightness Node: Yes
+
+# Manual sysfs test (after udev rule or with sudo)
+echo 255 > /sys/devices/platform/hp-wmi/fourzone_brightness
+echo "00BFFF00BFFF00BFFF00BFFF" > /sys/devices/platform/hp-wmi/fourzone_color
+```
+
+If sysfs writes work but OmenCore GUI does not, re-check the udev rule (step 2).
+If sysfs nodes are missing, re-check DKMS (step 1). If nodes exist, writes
+succeed, brightness is non-zero, and the keyboard is still dark — collect a
+report with `sudo omencore-cli diagnose --report`.
+
+### Distro-specific notes
+
+| Topic | Arch / CachyOS | Debian / Pika OS |
+|-------|----------------|------------------|
+| Headers package | `linux-headers` | `linux-headers-$(uname -r)` |
+| Build tools meta | `base-devel` | `build-essential` |
+| DKMS workflow | Same | Same |
+| Udev rule | Must be installed manually | Must be installed manually |
+
+This is **not** a distro packaging bug — package names differ, but the sysfs
+interface and OmenCore behavior are identical once the steps above are done.
 
 ---
 

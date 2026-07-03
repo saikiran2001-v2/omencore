@@ -329,9 +329,26 @@ sudo omencore-cli fan --profile gaming
 sudo modprobe hp-wmi
 
 # Check available interfaces
-ls /sys/class/leds/
 ls /sys/devices/platform/hp-wmi/
+ls /sys/class/leds/
+
+# Four-zone RGB (2023+ OMEN / Victus) — see distro hopping checklist
+ls /sys/devices/platform/hp-wmi/fourzone_*
+cat /sys/devices/platform/hp-wmi/fourzone_brightness   # 0 = physically off
+
+# Install udev rule for GUI access (from omencore repo root)
+sudo cp scripts/99-omencore-hp-wmi.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=platform --action=change
+
+# Restore brightness then set color
+omencore-cli keyboard --brightness 100
+omencore-cli keyboard --color 00BFFF
 ```
+
+See [Distro hopping checklist](../../docs/LINUX_INSTALL_GUIDE.md#distro-hopping-checklist-four-zone-keyboard-rgb)
+in the Linux install guide for DKMS setup, udev permissions, and the
+`fourzone_brightness` gate (common after moving from CachyOS to Debian/Pika OS).
 
 ## Contributing
 
