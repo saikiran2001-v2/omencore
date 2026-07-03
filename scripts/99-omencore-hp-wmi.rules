@@ -1,6 +1,8 @@
-# OmenCore: allow desktop users to control HP OMEN keyboard lighting without sudo.
+# OmenCore: four-zone keyboard sysfs — permissions and brightness gate init.
+# Requires scripts/init-fourzone-keyboard.sh at /usr/local/lib/omencore/
+# (installed by build.sh or manually — see docs/LINUX_INSTALL_GUIDE.md).
 ACTION=="add|change", SUBSYSTEM=="platform", KERNEL=="hp-wmi", \
-  RUN+="/bin/sh -c 'for f in fourzone_color fourzone_brightness fourzone_animation; do [ -e /sys/devices/platform/hp-wmi/$$f ] && chmod 0666 /sys/devices/platform/hp-wmi/$$f; done; true'"
+  RUN+="/usr/local/lib/omencore/init-fourzone-keyboard.sh"
 
 # OmenCore: allow manual fan PWM writes on hp-wmi hwmon when present.
 ACTION=="add|change", SUBSYSTEM=="hwmon", ATTR{name}=="hp", \

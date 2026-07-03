@@ -743,13 +743,19 @@ as your user and writes directly to:
 - `/sys/devices/platform/hp-wmi/fourzone_animation`
 
 On CachyOS you may already have had this rule; Debian-based installs usually do
-not. Install it from this repository:
+not. Install the init helper and udev rule from this repository:
 
 ```bash
+sudo mkdir -p /usr/local/lib/omencore
+sudo cp scripts/init-fourzone-keyboard.sh /usr/local/lib/omencore/
+sudo chmod +x /usr/local/lib/omencore/init-fourzone-keyboard.sh
 sudo cp scripts/99-omencore-hp-wmi.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=platform --action=change
 ```
+
+`build.sh` installs both automatically. The init helper raises `fourzone_brightness`
+from `0` to `255` when the firmware gate is off — see step 3 below.
 
 Verify:
 
@@ -772,6 +778,10 @@ Four-zone OMEN keyboards use **two** sysfs controls:
 
 Firmware often starts with `fourzone_brightness = 0` on a new distro install.
 OmenCore can write colors successfully while the keyboard stays physically off.
+This is not a udev/permissions problem — check brightness first.
+
+`init-fourzone-keyboard.sh` (installed in step 2) raises the gate from `0` to
+`255` when `hp-wmi` appears. Set `OMENCORE_SKIP_BRIGHTNESS_INIT=1` to skip that.
 
 Check:
 
