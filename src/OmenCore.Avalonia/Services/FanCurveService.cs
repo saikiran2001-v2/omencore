@@ -1,3 +1,5 @@
+using OmenCore.Linux.Config;
+
 namespace OmenCore.Avalonia.Services;
 
 /// <summary>
@@ -44,6 +46,31 @@ public interface IFanCurveService
     /// Saves or updates a named preset.
     /// </summary>
     void SavePreset(string name, IEnumerable<FanCurvePoint> cpuCurve, IEnumerable<FanCurvePoint> gpuCurve);
+
+    /// <summary>
+    /// Returns true when the preset is one of the built-in defaults.
+    /// </summary>
+    bool IsBuiltInPreset(string name);
+
+    /// <summary>
+    /// Returns true when the preset can be removed (custom presets only).
+    /// </summary>
+    bool CanDeletePreset(string name);
+
+    /// <summary>
+    /// Deletes a custom preset. Built-in presets cannot be removed.
+    /// </summary>
+    bool DeletePreset(string name);
+
+    /// <summary>
+    /// Renames a custom preset.
+    /// </summary>
+    bool RenamePreset(string oldName, string newName);
+
+    /// <summary>
+    /// Writes custom presets into user preferences.
+    /// </summary>
+    void SyncCustomPresetsToPreferences();
 }
 
 /// <summary>
@@ -52,8 +79,14 @@ public interface IFanCurveService
 public class FanCurveService : IFanCurveService
 {
     private readonly IHardwareService _hardwareService;
+    private readonly IUserPreferencesService _preferences;
     private List<FanCurvePoint> _cpuCurve;
     private List<FanCurvePoint> _gpuCurve;
+
+    private static readonly HashSet<string> BuiltInPresets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Silent", "Balanced", "Performance", "Aggressive"
+    };
 
     private static readonly Dictionary<string, (List<FanCurvePoint> cpu, List<FanCurvePoint> gpu)> Presets = new()
     {
@@ -99,12 +132,58 @@ public class FanCurveService : IFanCurveService
         )
     };
 
-    public FanCurveService(IHardwareService hardwareService)
+    public FanCurveService(IHardwareService hardwareService, IUserPreferencesService preferences)
     {
         _hardwareService = hardwareService;
+        _preferences = preferences;
+        LoadCustomPresetsFromPreferences();
+
         var balanced = Presets["Balanced"];
         _cpuCurve = new List<FanCurvePoint>(balanced.cpu);
         _gpuCurve = new List<FanCurvePoint>(balanced.gpu);
+    }
+
+    private void LoadCustomPresetsFromPreferences()
+    {
+        foreach (var preset in _preferences.Current.Fan.CustomPresets)
+        {
+            if (string.IsNullOrWhiteSpace(preset.Name))
+                continue;
+
+            var cpu = preset.Cpu
+                .Select(p => new FanCurvePoint(p.Temperature, p.FanSpeed))
+                .OrderBy(p => p.Temperature)
+                .ToList();
+            var gpu = preset.Gpu
+                .Select(p => new FanCurvePoint(p.Temperature, p.FanSpeed))
+                .OrderBy(p => p.Temperature)
+                .ToList();
+
+            if (cpu.Count >= 2 && gpu.Count >= 2)
+                Presets[preset.Name.Trim()] = (cpu, gpu);
+        }
+    }
+
+    public void SyncCustomPresetsToPreferences()
+    {
+        _preferences.Current.Fan.CustomPresets = Presets
+            .Where(kvp => !BuiltInPresets.Contains(kvp.Key))
+            .Select(kvp => new SavedFanPreset
+            {
+                Name = kvp.Key,
+                Cpu = kvp.Value.cpu.Select(p => new SavedFanCurvePoint
+                {
+                    Temperature = p.Temperature,
+                    FanSpeed = p.FanSpeed
+                }).ToList(),
+                Gpu = kvp.Value.gpu.Select(p => new SavedFanCurvePoint
+                {
+                    Temperature = p.Temperature,
+                    FanSpeed = p.FanSpeed
+                }).ToList()
+            })
+            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public List<FanCurvePoint> GetCpuFanCurve() => new(_cpuCurve);
@@ -127,7 +206,16 @@ public class FanCurveService : IFanCurveService
         // Calculate fan speeds based on current temperatures
         var cpuFanSpeed = InterpolateFanSpeed(_cpuCurve, status.CpuTemperature);
         var gpuFanSpeed = InterpolateFanSpeed(_gpuCurve, status.GpuTemperature);
-        
+        var targetSpeed = Math.Max(cpuFanSpeed, gpuFanSpeed);
+
+        var capabilities = await _hardwareService.GetCapabilitiesAsync();
+        if (capabilities.SupportsHwmonPwmDuty)
+        {
+            // hp-wmi hwmon pwm1 typically drives both fans from one duty value.
+            await _hardwareService.SetCpuFanSpeedAsync(targetSpeed);
+            return;
+        }
+
         await _hardwareService.SetCpuFanSpeedAsync(cpuFanSpeed);
         await _hardwareService.SetGpuFanSpeedAsync(gpuFanSpeed);
     }
@@ -162,6 +250,51 @@ public class FanCurveService : IFanCurveService
         }
 
         Presets[normalizedName] = (cpu, gpu);
+        SyncCustomPresetsToPreferences();
+    }
+
+    public bool IsBuiltInPreset(string name) =>
+        BuiltInPresets.Contains(name.Trim());
+
+    public bool CanDeletePreset(string name)
+    {
+        var normalized = name.Trim();
+        return normalized.Length > 0
+               && !BuiltInPresets.Contains(normalized)
+               && Presets.ContainsKey(normalized);
+    }
+
+    public bool DeletePreset(string name)
+    {
+        var normalized = name.Trim();
+        if (!CanDeletePreset(normalized))
+            return false;
+
+        if (!Presets.Remove(normalized))
+            return false;
+
+        SyncCustomPresetsToPreferences();
+        return true;
+    }
+
+    public bool RenamePreset(string oldName, string newName)
+    {
+        var oldNormalized = oldName.Trim();
+        var newNormalized = newName.Trim();
+
+        if (!CanDeletePreset(oldNormalized)
+            || string.IsNullOrWhiteSpace(newNormalized)
+            || Presets.ContainsKey(newNormalized))
+        {
+            return false;
+        }
+
+        if (!Presets.Remove(oldNormalized, out var data))
+            return false;
+
+        Presets[newNormalized] = data;
+        SyncCustomPresetsToPreferences();
+        return true;
     }
 
     private static int InterpolateFanSpeed(List<FanCurvePoint> curve, double temperature)

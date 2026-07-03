@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OmenCore.Avalonia.Services;
 using OmenCore.Linux.Desktop;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -124,6 +125,9 @@ public partial class MainWindowViewModel : ObservableObject
 
         CurrentView = DashboardVm;
         
+        FanControlVm.PropertyChanged += OnFanControlPropertyChanged;
+        SyncFanModeHeader();
+        
         // Get version from assembly
         var version = Assembly.GetExecutingAssembly().GetName().Version;
         if (version != null)
@@ -160,12 +164,39 @@ public partial class MainWindowViewModel : ObservableObject
             // Get current modes
             var perfMode = await _hardwareService.GetPerformanceModeAsync();
             PerformanceMode = perfMode.ToString();
+            SyncFanModeHeader();
         }
         catch (Exception ex)
         {
             StatusText = $"Error: {ex.Message}";
             IsConnected = false;
         }
+    }
+
+    private void OnFanControlPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(FanControlViewModel.ActiveFanProfile)
+            or nameof(FanControlViewModel.IsCustomCurveEnabled))
+        {
+            SyncFanModeHeader();
+        }
+    }
+
+    private void SyncFanModeHeader()
+    {
+        FanMode = FormatFanMode(FanControlVm.ActiveFanProfile, FanControlVm.IsCustomCurveEnabled);
+    }
+
+    internal static string FormatFanMode(string profile, bool customCurveEnabled)
+    {
+        return profile.Trim().ToLowerInvariant() switch
+        {
+            "manual" when customCurveEnabled => "Manual · curve",
+            "manual" => "Manual",
+            "max" => "Max",
+            "auto" => "Auto",
+            _ => char.ToUpperInvariant(profile[0]) + profile[1..]
+        };
     }
 
     private void SetActiveNavigation(string page)
@@ -227,7 +258,7 @@ public partial class MainWindowViewModel : ObservableObject
             var perfMode = await _hardwareService.GetPerformanceModeAsync();
 
             PerformanceMode = perfMode.ToString();
-            FanMode = (status.CpuFanRpm > 0 || status.GpuFanRpm > 0) ? "Active" : "Auto";
+            SyncFanModeHeader();
 
             if (CurrentPage == "Dashboard")
             {

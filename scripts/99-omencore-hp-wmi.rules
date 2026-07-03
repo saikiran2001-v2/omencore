@@ -1,0 +1,7 @@
+# OmenCore: allow desktop users to control HP OMEN keyboard lighting without sudo.
+ACTION=="add|change", SUBSYSTEM=="platform", KERNEL=="hp-wmi", \
+  RUN+="/bin/sh -c 'for f in fourzone_color fourzone_brightness fourzone_animation; do [ -e /sys/devices/platform/hp-wmi/$$f ] && chmod 0666 /sys/devices/platform/hp-wmi/$$f; done; true'"
+
+# OmenCore: allow manual fan PWM writes on hp-wmi hwmon when present.
+ACTION=="add|change", SUBSYSTEM=="hwmon", ATTR{name}=="hp", \
+  RUN+="/bin/sh -c 'd=/sys/class/hwmon/%k; for f in pwm1 pwm1_enable; do [ -e $$d/$$f ] && chmod 0666 $$d/$$f; done; true'"

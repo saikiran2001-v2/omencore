@@ -48,6 +48,20 @@ public static class ReliabilityDiagnosticsStore
             EnsureDiagnosticsDirectory();
             var json = JsonSerializer.Serialize(snapshot, LinuxJsonContext.Default.ReliabilityStatusSnapshot);
             File.WriteAllText(SnapshotPath, json);
+            try
+            {
+                if (OperatingSystem.IsLinux())
+                {
+                    File.SetUnixFileMode(SnapshotPath,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                        UnixFileMode.GroupRead | UnixFileMode.GroupWrite |
+                        UnixFileMode.OtherRead);
+                }
+            }
+            catch
+            {
+                // Best effort only.
+            }
         }
         catch
         {

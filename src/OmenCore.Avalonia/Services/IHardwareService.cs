@@ -54,6 +54,8 @@ public class SystemCapabilities
     public bool SupportsCpuPowerLimit { get; set; }
     public bool SupportsBatteryChargeLimit { get; set; }
     public bool HasNvidiaSettings { get; set; }
+    /// <summary>hp-wmi hwmon exposes writable pwm1 with pwm_enable manual mode.</summary>
+    public bool SupportsHwmonPwmDuty { get; set; }
 }
 
 /// <summary>

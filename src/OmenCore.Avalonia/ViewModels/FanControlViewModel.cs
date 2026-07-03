@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OmenCore.Avalonia.Services;
 using OmenCore.Linux.Daemon;
+using SavedFanCurvePoint = OmenCore.Linux.Config.SavedFanCurvePoint;
 using System.Collections.ObjectModel;
 
 namespace OmenCore.Avalonia.ViewModels;
@@ -13,7 +14,9 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 {
     private readonly IHardwareService _hardwareService;
     private readonly IFanCurveService _fanCurveService;
+    private readonly IUserPreferencesService _preferences;
     private bool _disposed;
+    private bool _isRestoringPreferences;
 
     [ObservableProperty]
     private double _cpuTemperature;
@@ -40,6 +43,9 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     private string _selectedPreset = "Balanced";
 
     [ObservableProperty]
+    private string _presetRenameText = "";
+
+    [ObservableProperty]
     private string _statusMessage = "";
 
     [ObservableProperty]
@@ -64,6 +70,74 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _activeFanProfile = "auto";
 
+    [ObservableProperty]
+    private int _manualFanSpeed = 50;
+
+    [ObservableProperty]
+    private bool _usesUnifiedPwm;
+
+    [ObservableProperty]
+    private int _curveHysteresis = 3;
+
+    [ObservableProperty]
+    private double _curveRampUpDelay = 1.0;
+
+    [ObservableProperty]
+    private double _curveRampDownDelay = 3.0;
+
+    public string CurveHysteresisText
+    {
+        get => CurveHysteresis.ToString();
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            if (int.TryParse(value.Trim(), out var parsed))
+            {
+                CurveHysteresis = Math.Clamp(parsed, 1, 10);
+            }
+
+            OnPropertyChanged();
+        }
+    }
+
+    public string CurveRampUpDelayText
+    {
+        get => CurveRampUpDelay.ToString("0.0");
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            if (double.TryParse(value.Trim(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            {
+                CurveRampUpDelay = Math.Clamp(parsed, 0, 30);
+            }
+
+            OnPropertyChanged();
+        }
+    }
+
+    public string CurveRampDownDelayText
+    {
+        get => CurveRampDownDelay.ToString("0.0");
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            if (double.TryParse(value.Trim(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            {
+                CurveRampDownDelay = Math.Clamp(parsed, 0, 30);
+            }
+
+            OnPropertyChanged();
+        }
+    }
+
     // Smart Auto-Switch — temperature-driven profile switching for profile-only boards
     [ObservableProperty]
     private bool _isAutoSwitchEnabled;
@@ -79,8 +153,25 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 
     private string _autoSwitchCurrentProfile = string.Empty;
     private DateTime _lastReliabilityRefreshUtc = DateTime.MinValue;
+    private DateTime _lastCurveApplyUtc = DateTime.MinValue;
+    private int _lastAppliedCurveSpeed = -1;
+    private int _lastAppliedCurveTemp;
+    private int _pendingCurveSpeed = -1;
+    private DateTime _pendingCurveSinceUtc = DateTime.MinValue;
 
-    public bool IsCurveEditorVisible => CanEditFanCurve && IsCustomCurveEnabled;
+    public bool IsManualControlsVisible =>
+        CanEditFanCurve && string.Equals(ActiveFanProfile, "manual", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsFixedSpeedVisible => IsManualControlsVisible && !IsCustomCurveEnabled;
+
+    public bool IsCurveEditorVisible => IsManualControlsVisible && IsCustomCurveEnabled;
+
+    public int ManualFanPwm => FanCurvePointViewModel.PercentToPwm(ManualFanSpeed);
+
+    public bool CanDeleteSelectedPreset =>
+        !string.IsNullOrWhiteSpace(SelectedPreset) && _fanCurveService.CanDeletePreset(SelectedPreset);
+
+    public bool CanRenameSelectedPreset => CanDeleteSelectedPreset;
 
     public ObservableCollection<string> Presets { get; } = new();
     public ObservableCollection<FanCurvePointViewModel> CpuFanCurve { get; } = new();
@@ -89,10 +180,12 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 
     public FanControlViewModel(
         IHardwareService hardwareService,
-        IFanCurveService fanCurveService)
+        IFanCurveService fanCurveService,
+        IUserPreferencesService preferences)
     {
         _hardwareService = hardwareService;
         _fanCurveService = fanCurveService;
+        _preferences = preferences;
         
         _hardwareService.StatusChanged += OnStatusChanged;
         
@@ -114,12 +207,95 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         _ = RefreshReliabilityDiagnosticsAsync(force: true);
     }
 
+    private async Task RestoreFanPreferencesAsync()
+    {
+        var fan = _preferences.Current.Fan;
+        _isRestoringPreferences = true;
+        try
+        {
+            if (fan.CpuCurve.Count >= 2)
+            {
+                CpuFanCurve.Clear();
+                foreach (var point in fan.CpuCurve.OrderBy(p => p.Temperature))
+                    CpuFanCurve.Add(new FanCurvePointViewModel(new FanCurvePoint(point.Temperature, point.FanSpeed)));
+
+                GpuFanCurve.Clear();
+                foreach (var point in fan.CpuCurve.OrderBy(p => p.Temperature))
+                    GpuFanCurve.Add(new FanCurvePointViewModel(new FanCurvePoint(point.Temperature, point.FanSpeed)));
+
+                _fanCurveService.SetCpuFanCurve(CpuFanCurve.Select(vm => new FanCurvePoint(vm.Temperature, vm.FanSpeed)));
+                _fanCurveService.SetGpuFanCurve(GpuFanCurve.Select(vm => new FanCurvePoint(vm.Temperature, vm.FanSpeed)));
+            }
+
+            if (!string.IsNullOrWhiteSpace(fan.SelectedPreset) && Presets.Contains(fan.SelectedPreset))
+            {
+                SelectedPreset = fan.SelectedPreset;
+                PresetRenameText = fan.SelectedPreset;
+                LoadPreset(fan.SelectedPreset);
+            }
+
+            CurveHysteresis = Math.Clamp(fan.CurveHysteresis, 1, 10);
+            CurveRampUpDelay = Math.Clamp(fan.CurveRampUpDelay, 0, 30);
+            CurveRampDownDelay = Math.Clamp(fan.CurveRampDownDelay, 0, 30);
+            ManualFanSpeed = Math.Clamp(fan.ManualFanSpeed, 0, 100);
+
+            if (CanEditFanCurve
+                && string.Equals(fan.ActiveFanProfile, "manual", StringComparison.OrdinalIgnoreCase))
+            {
+                ActiveFanProfile = "manual";
+                IsCustomCurveEnabled = fan.IsCustomCurveEnabled;
+
+                if (IsCustomCurveEnabled)
+                    await ApplyCurve();
+                else
+                    await ApplyManualFanSpeedAsync(ManualFanSpeed);
+            }
+            else if (HasFanProfileAccess
+                     && !string.IsNullOrWhiteSpace(fan.ActiveFanProfile)
+                     && !string.Equals(fan.ActiveFanProfile, "manual", StringComparison.OrdinalIgnoreCase))
+            {
+                await SetFanProfile(fan.ActiveFanProfile);
+            }
+        }
+        finally
+        {
+            _isRestoringPreferences = false;
+        }
+    }
+
+    private async Task PersistFanStateAsync()
+    {
+        if (_isRestoringPreferences)
+            return;
+
+        var fan = _preferences.Current.Fan;
+        fan.ActiveFanProfile = ActiveFanProfile;
+        fan.IsCustomCurveEnabled = IsCustomCurveEnabled;
+        fan.ManualFanSpeed = ManualFanSpeed;
+        fan.CurveHysteresis = CurveHysteresis;
+        fan.CurveRampUpDelay = CurveRampUpDelay;
+        fan.CurveRampDownDelay = CurveRampDownDelay;
+        fan.SelectedPreset = SelectedPreset;
+        fan.CpuCurve = CpuFanCurve
+            .Select(vm => new SavedFanCurvePoint
+            {
+                Temperature = vm.Temperature,
+                FanSpeed = vm.FanSpeed
+            })
+            .OrderBy(p => p.Temperature)
+            .ToList();
+
+        _fanCurveService.SyncCustomPresetsToPreferences();
+        await _preferences.SaveAndSyncDaemonConfigAsync();
+    }
+
     private async Task InitializeCapabilitiesAsync()
     {
         try
         {
             var capabilities = await _hardwareService.GetCapabilitiesAsync();
             CanEditFanCurve = capabilities.SupportsFanControl;
+            UsesUnifiedPwm = capabilities.SupportsHwmonPwmDuty;
 
             var capabilityClass = capabilities.FanControlCapabilityClass?.Trim().ToLowerInvariant() ?? "unsupported-control";
             HasFanProfileAccess = capabilityClass is "profile-only" or "full-control";
@@ -149,6 +325,25 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
             CapabilityWarningMessage = "Could not detect Linux fan-control capability. Curve controls may be unavailable on this system.";
             System.Diagnostics.Debug.WriteLine($"Failed to initialize fan capability state: {ex.Message}");
         }
+
+        _ = ScheduleRestoreFanPreferencesAsync();
+    }
+
+    private Task ScheduleRestoreFanPreferencesAsync()
+    {
+        return Task.Run(async () =>
+        {
+            try
+            {
+                // Let the window finish opening before touching hardware.
+                await Task.Delay(750);
+                await RestoreFanPreferencesAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to restore fan preferences: {ex.Message}");
+            }
+        });
     }
 
     private void OnStatusChanged(object? sender, HardwareStatus status)
@@ -160,6 +355,9 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 
         CpuFanPercent = status.CpuFanPercent;
         GpuFanPercent = status.GpuFanPercent;
+
+        if (IsCurveEditorVisible)
+            _ = ApplyCurveIfNeededAsync(status);
 
         if (IsAutoSwitchEnabled && HasFanProfileAccess)
             _ = RunAutoSwitchAsync(Math.Max(CpuTemperature, GpuTemperature));
@@ -199,19 +397,139 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedPresetChanged(string value)
     {
+        OnPropertyChanged(nameof(CanDeleteSelectedPreset));
+        OnPropertyChanged(nameof(CanRenameSelectedPreset));
+        PresetRenameText = value;
+
         if (!string.IsNullOrEmpty(value))
         {
             LoadPreset(value);
-            if (CanEditFanCurve)
+            if (IsCurveEditorVisible)
             {
                 _ = ApplyCurve();
             }
         }
+
+        _ = PersistFanStateAsync();
+    }
+
+    partial void OnActiveFanProfileChanged(string value)
+    {
+        NotifyManualVisibilityChanged();
+        _ = PersistFanStateAsync();
     }
 
     partial void OnIsCustomCurveEnabledChanged(bool value)
     {
-        OnPropertyChanged(nameof(IsCurveEditorVisible));
+        NotifyManualVisibilityChanged();
+
+        if (!IsManualControlsVisible)
+        {
+            _ = PersistFanStateAsync();
+            return;
+        }
+
+        if (value)
+        {
+            _lastAppliedCurveSpeed = -1;
+            _pendingCurveSpeed = -1;
+            _ = ApplyCurve();
+        }
+        else
+        {
+            _ = ApplyManualFanSpeedAsync(ManualFanSpeed);
+        }
+
+        _ = PersistFanStateAsync();
+    }
+
+    partial void OnManualFanSpeedChanged(int value)
+    {
+        OnPropertyChanged(nameof(ManualFanPwm));
+
+        if (!IsFixedSpeedVisible)
+            return;
+
+        _ = ApplyManualFanSpeedAsync(value);
+        _ = PersistFanStateAsync();
+    }
+
+    partial void OnCurveHysteresisChanged(int value)
+    {
+        OnPropertyChanged(nameof(CurveHysteresisText));
+        _ = PersistFanStateAsync();
+    }
+
+    partial void OnCurveRampUpDelayChanged(double value)
+    {
+        OnPropertyChanged(nameof(CurveRampUpDelayText));
+        _ = PersistFanStateAsync();
+    }
+
+    partial void OnCurveRampDownDelayChanged(double value)
+    {
+        OnPropertyChanged(nameof(CurveRampDownDelayText));
+        _ = PersistFanStateAsync();
+    }
+
+    private async Task ApplyManualFanSpeedAsync(int speed)
+    {
+        try
+        {
+            await _hardwareService.SetCpuFanSpeedAsync(speed);
+            if (!UsesUnifiedPwm)
+                await _hardwareService.SetGpuFanSpeedAsync(speed);
+            StatusMessage = $"Manual fan speed set to {speed}%";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to set fan speed: {ex.Message}";
+        }
+    }
+
+    private async Task ApplyCurveIfNeededAsync(HardwareStatus status)
+    {
+        var maxTemp = (int)Math.Max(status.CpuTemperature, status.GpuTemperature);
+        var targetSpeed = ComputeTargetCurveSpeed(status);
+
+        if (targetSpeed == _lastAppliedCurveSpeed)
+        {
+            _pendingCurveSpeed = -1;
+            return;
+        }
+
+        if (_lastAppliedCurveSpeed >= 0 &&
+            Math.Abs(maxTemp - _lastAppliedCurveTemp) < CurveHysteresis)
+        {
+            _pendingCurveSpeed = -1;
+            return;
+        }
+
+        var isIncrease = _lastAppliedCurveSpeed < 0 || targetSpeed > _lastAppliedCurveSpeed;
+        var rampDelay = isIncrease ? CurveRampUpDelay : CurveRampDownDelay;
+
+        if (rampDelay > 0)
+        {
+            var now = DateTime.UtcNow;
+            if (_pendingCurveSpeed != targetSpeed)
+            {
+                _pendingCurveSpeed = targetSpeed;
+                _pendingCurveSinceUtc = now;
+                return;
+            }
+
+            if ((now - _pendingCurveSinceUtc).TotalSeconds < rampDelay)
+                return;
+        }
+
+        await ApplyCurve();
+    }
+
+    private int ComputeTargetCurveSpeed(HardwareStatus status)
+    {
+        var cpuFanSpeed = InterpolatePreview(CpuFanCurve, status.CpuTemperature);
+        var gpuFanSpeed = InterpolatePreview(GpuFanCurve, status.GpuTemperature);
+        return Math.Max(cpuFanSpeed, gpuFanSpeed);
     }
 
     partial void OnCanEditFanCurveChanged(bool value)
@@ -219,8 +537,17 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         if (!value)
         {
             IsCustomCurveEnabled = false;
+            if (string.Equals(ActiveFanProfile, "manual", StringComparison.OrdinalIgnoreCase))
+                ActiveFanProfile = "auto";
         }
 
+        NotifyManualVisibilityChanged();
+    }
+
+    private void NotifyManualVisibilityChanged()
+    {
+        OnPropertyChanged(nameof(IsManualControlsVisible));
+        OnPropertyChanged(nameof(IsFixedSpeedVisible));
         OnPropertyChanged(nameof(IsCurveEditorVisible));
     }
 
@@ -261,7 +588,15 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
             _fanCurveService.SetGpuFanCurve(GpuFanCurve.Select(vm => new FanCurvePoint(vm.Temperature, vm.FanSpeed)));
             
             await _fanCurveService.ApplyAsync();
-            StatusMessage = "Applied once using current CPU/GPU temperatures.";
+            var status = await _hardwareService.GetStatusAsync();
+            _lastAppliedCurveTemp = (int)Math.Max(status.CpuTemperature, status.GpuTemperature);
+            _lastAppliedCurveSpeed = ComputeTargetCurveSpeed(status);
+            _pendingCurveSpeed = -1;
+            _lastCurveApplyUtc = DateTime.UtcNow;
+            StatusMessage = UsesUnifiedPwm
+                ? $"Custom curve active — pwm {_lastAppliedCurveSpeed}% (max of CPU/GPU curve)"
+                : "Custom curve active — speeds updated from CPU/GPU temperatures.";
+            await PersistFanStateAsync();
         }
         catch (Exception ex)
         {
@@ -286,7 +621,7 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
             var baseName = string.IsNullOrWhiteSpace(SelectedPreset) ? "Custom" : SelectedPreset.Trim();
             var presetName = baseName;
 
-            if (Presets.Contains(presetName))
+            if (Presets.Contains(presetName) && !_fanCurveService.CanDeletePreset(presetName))
             {
                 presetName = $"{baseName}-{DateTime.Now:HHmmss}";
             }
@@ -302,7 +637,11 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
             }
 
             SelectedPreset = presetName;
+            PresetRenameText = presetName;
+            OnPropertyChanged(nameof(CanDeleteSelectedPreset));
+            OnPropertyChanged(nameof(CanRenameSelectedPreset));
             await ApplyCurve();
+            await PersistFanStateAsync();
             StatusMessage = $"Saved preset '{presetName}'";
         }
         catch (Exception ex)
@@ -312,19 +651,111 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private async Task DeletePreset()
+    {
+        var name = SelectedPreset?.Trim();
+        if (string.IsNullOrEmpty(name) || !_fanCurveService.CanDeletePreset(name))
+        {
+            StatusMessage = "Only custom presets can be deleted.";
+            return;
+        }
+
+        if (!_fanCurveService.DeletePreset(name))
+        {
+            StatusMessage = $"Failed to delete preset '{name}'.";
+            return;
+        }
+
+        Presets.Remove(name);
+        SelectedPreset = "Balanced";
+        PresetRenameText = "Balanced";
+        LoadPreset("Balanced");
+        OnPropertyChanged(nameof(CanDeleteSelectedPreset));
+        OnPropertyChanged(nameof(CanRenameSelectedPreset));
+        await PersistFanStateAsync();
+        StatusMessage = $"Deleted preset '{name}'.";
+    }
+
+    [RelayCommand]
+    private async Task RenamePreset()
+    {
+        var oldName = SelectedPreset?.Trim();
+        var newName = PresetRenameText?.Trim();
+
+        if (string.IsNullOrEmpty(oldName)
+            || string.IsNullOrEmpty(newName)
+            || string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusMessage = "Enter a new name for the preset.";
+            return;
+        }
+
+        if (!_fanCurveService.RenamePreset(oldName, newName))
+        {
+            StatusMessage = $"Could not rename '{oldName}' to '{newName}'.";
+            return;
+        }
+
+        Presets.Remove(oldName);
+        if (!Presets.Contains(newName))
+            Presets.Add(newName);
+
+        SelectedPreset = newName;
+        OnPropertyChanged(nameof(CanDeleteSelectedPreset));
+        OnPropertyChanged(nameof(CanRenameSelectedPreset));
+        await PersistFanStateAsync();
+        StatusMessage = $"Renamed preset to '{newName}'.";
+    }
+
+    [RelayCommand]
     private async Task SetFanProfile(string profile)
     {
+        profile = profile.Trim().ToLowerInvariant();
+
+        if (profile == "manual")
+        {
+            if (!CanEditFanCurve)
+            {
+                StatusMessage = "Manual fan control is unavailable on this system.";
+                return;
+            }
+
+            ActiveFanProfile = "manual";
+            IsCustomCurveEnabled = false;
+            StatusMessage = "Manual mode — set a fixed speed or switch to custom curve.";
+            return;
+        }
+
+        IsCustomCurveEnabled = false;
+
         try
         {
             await _hardwareService.SetFanProfileAsync(profile);
             ActiveFanProfile = profile;
-            StatusMessage = $"Fan profile set to {profile}";
+            StatusMessage = $"Fan mode set to {profile}";
+            await PersistFanStateAsync();
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Failed to set fan profile: {ex.Message}";
+            StatusMessage = $"Failed to set fan mode: {ex.Message}";
             System.Diagnostics.Debug.WriteLine($"SetFanProfile failed: {ex.Message}");
         }
+    }
+
+    [RelayCommand]
+    private async Task SetManualControlType(string type)
+    {
+        if (!IsManualControlsVisible)
+            return;
+
+        if (string.Equals(type, "curve", StringComparison.OrdinalIgnoreCase))
+        {
+            IsCustomCurveEnabled = true;
+            return;
+        }
+
+        IsCustomCurveEnabled = false;
+        await ApplyManualFanSpeedAsync(ManualFanSpeed);
     }
 
     private Task RefreshReliabilityDiagnosticsAsync(bool force = false)
@@ -415,6 +846,33 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         }
     }
 
+    private static int InterpolatePreview(IEnumerable<FanCurvePointViewModel> curve, double temperature)
+    {
+        var points = curve.OrderBy(p => p.Temperature).ToList();
+        if (points.Count == 0)
+            return 50;
+
+        var temp = (int)temperature;
+        if (temp <= points[0].Temperature)
+            return points[0].FanSpeed;
+        if (temp >= points[^1].Temperature)
+            return points[^1].FanSpeed;
+
+        for (var i = 0; i < points.Count - 1; i++)
+        {
+            if (temp >= points[i].Temperature && temp <= points[i + 1].Temperature)
+            {
+                var range = points[i + 1].Temperature - points[i].Temperature;
+                if (range <= 0)
+                    return points[i].FanSpeed;
+                var t = (double)(temp - points[i].Temperature) / range;
+                return (int)(points[i].FanSpeed + t * (points[i + 1].FanSpeed - points[i].FanSpeed));
+            }
+        }
+
+        return 50;
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -436,9 +894,80 @@ public partial class FanCurvePointViewModel : ObservableObject
     [ObservableProperty]
     private int _fanSpeed;
 
+    public string TemperatureText
+    {
+        get => Temperature.ToString();
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            if (int.TryParse(value.Trim(), out var parsed))
+            {
+                Temperature = Math.Clamp(parsed, 30, 100);
+            }
+
+            OnPropertyChanged();
+        }
+    }
+
+    public string FanSpeedText
+    {
+        get => FanSpeed.ToString();
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            if (int.TryParse(value.Trim(), out var parsed))
+            {
+                FanSpeed = Math.Clamp(parsed, 0, 100);
+            }
+
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PwmText));
+        }
+    }
+
+    public string PwmText
+    {
+        get => PercentToPwm(FanSpeed).ToString();
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            if (int.TryParse(value.Trim(), out var pwm))
+            {
+                pwm = Math.Clamp(pwm, 0, 255);
+                FanSpeed = Math.Clamp(PwmToPercent(pwm), 0, 100);
+            }
+
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(FanSpeedText));
+        }
+    }
+
+    public int PwmValue => PercentToPwm(FanSpeed);
+
     public FanCurvePointViewModel(FanCurvePoint point)
     {
         Temperature = point.Temperature;
         FanSpeed = point.FanSpeed;
     }
+
+    partial void OnTemperatureChanged(int value) => OnPropertyChanged(nameof(TemperatureText));
+
+    partial void OnFanSpeedChanged(int value)
+    {
+        OnPropertyChanged(nameof(FanSpeedText));
+        OnPropertyChanged(nameof(PwmText));
+        OnPropertyChanged(nameof(PwmValue));
+    }
+
+    public static int PercentToPwm(int percent) =>
+        Math.Clamp((int)Math.Round(Math.Clamp(percent, 0, 100) * 255.0 / 100.0), 0, 255);
+
+    public static int PwmToPercent(int pwm) =>
+        Math.Clamp((int)Math.Round(Math.Clamp(pwm, 0, 255) * 100.0 / 255.0), 0, 100);
 }

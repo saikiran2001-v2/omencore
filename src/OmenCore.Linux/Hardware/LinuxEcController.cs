@@ -249,11 +249,7 @@ public class LinuxEcController
     /// </summary>
     private void DiscoverHwmonFanControl()
     {
-        var hpWmiHwmonPath = Path.Combine(HP_WMI_PATH, "hwmon");
-        if (!Directory.Exists(hpWmiHwmonPath))
-            return;
-
-        foreach (var hwmonDir in Directory.GetDirectories(hpWmiHwmonPath))
+        foreach (var hwmonDir in LinuxSysfsPathMap.EnumerateHpWmiHwmonDirectories())
         {
             var pwm1Enable = Path.Combine(hwmonDir, "pwm1_enable");
             if (File.Exists(pwm1Enable))

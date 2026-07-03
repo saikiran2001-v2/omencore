@@ -39,20 +39,24 @@ public static class LinuxCapabilityClassifier
         bool hasFan1Target,
         bool hasFan2Target,
         bool hasHwmonFanAccess,
+        bool hasHwmonPwmDutyAccess,
         bool hasTelemetryPaths,
         bool isUnsafeEcModel,
         string? model,
         string? boardId)
     {
-        var hasManualFanControl = hasEcAccess || hasFan1Output || hasFan2Output || hasFan1Target || hasFan2Target;
-        // hwmon pwm_enable gives coarse policy control (auto/full/manual mode), but not reliable
-        // per-fan/manual target writes by itself.
+        var hasManualFanControl = hasEcAccess || hasFan1Output || hasFan2Output || hasFan1Target ||
+                                  hasFan2Target || hasHwmonPwmDutyAccess;
+        // hwmon pwm_enable alone gives coarse policy control (auto/full); pwm1 duty writes are
+        // required for reliable manual speed control.
         var hasProfileControl = hasThermalProfile || hasPlatformProfile || hasAcpiPlatformProfile || hasHwmonFanAccess;
         var hasTelemetry = hasTelemetryPaths || hasHpWmiPath || hasManualFanControl || hasProfileControl;
 
         if (hasManualFanControl)
         {
-            var reason = hasHwmonFanAccess
+            var reason = hasHwmonPwmDutyAccess
+                ? "Manual fan control is available through hp-wmi hwmon pwm1 duty (pwm_enable=1)."
+                : hasHwmonFanAccess
                 ? "Manual fan control is available through hp-wmi hwmon pwm/fan targets."
                 : hasFan1Target || hasFan2Target
                     ? "Manual fan control is available through hp-wmi hwmon fan target files."

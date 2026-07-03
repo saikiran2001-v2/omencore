@@ -246,6 +246,20 @@ WantedBy=multi-user.target
         try
         {
             Directory.CreateDirectory(ReliabilityDiagnosticsStore.DiagnosticsDirPath);
+            OmenCorePaths.EnsureSharedConfigDirectory();
+            try
+            {
+                if (OperatingSystem.IsLinux())
+                    File.SetUnixFileMode(OmenCorePaths.SharedConfigDir,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                        UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                        UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute |
+                        UnixFileMode.StickyBit);
+            }
+            catch
+            {
+                // Best effort only.
+            }
             await File.WriteAllTextAsync(SystemdServicePath, BuildSystemdService(GetCurrentExecutablePath()));
 
             if (!Directory.Exists(SystemConfigDir))

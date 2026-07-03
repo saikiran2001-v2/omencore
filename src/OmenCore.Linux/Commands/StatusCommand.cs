@@ -65,6 +65,7 @@ public static class StatusCommand
             LinuxSysfsPathMap.HasHpWmiFanTarget(1),
             LinuxSysfsPathMap.HasHpWmiFanTarget(2),
             ec.HasHwmonFanAccess,
+            LinuxSysfsPathMap.HasHpWmiPwmDutyAccess(),
             ecIoPathExists || hpWmiPathExists,
             ec.IsUnsafeEcModel,
             ec.DetectedModel,

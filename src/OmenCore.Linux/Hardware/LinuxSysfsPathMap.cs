@@ -130,20 +130,51 @@ public static class LinuxSysfsPathMap
 
     public static IEnumerable<string> EnumerateHpWmiHwmonDirectories()
     {
-        if (!Directory.Exists(HpWmiHwmonRoot))
+        var directories = new List<string>();
+
+        if (Directory.Exists(HpWmiHwmonRoot))
         {
-            return Array.Empty<string>();
+            try
+            {
+                directories.AddRange(
+                    Directory.GetDirectories(HpWmiHwmonRoot, "hwmon*", SearchOption.TopDirectoryOnly));
+            }
+            catch
+            {
+                // Fall through to /sys/class/hwmon scan.
+            }
         }
 
-        try
+        const string classHwmonRoot = "/sys/class/hwmon";
+        if (Directory.Exists(classHwmonRoot))
         {
-            return Directory.GetDirectories(HpWmiHwmonRoot, "hwmon*", SearchOption.TopDirectoryOnly);
+            try
+            {
+                foreach (var hwmonDir in Directory.GetDirectories(classHwmonRoot))
+                {
+                    var namePath = Path.Combine(hwmonDir, "name");
+                    if (!File.Exists(namePath))
+                        continue;
+
+                    var name = File.ReadAllText(namePath).Trim();
+                    if (name.Equals("hp", StringComparison.OrdinalIgnoreCase) &&
+                        !directories.Contains(hwmonDir))
+                    {
+                        directories.Add(hwmonDir);
+                    }
+                }
+            }
+            catch
+            {
+                // Best-effort only.
+            }
         }
-        catch
-        {
-            return Array.Empty<string>();
-        }
+
+        return directories;
     }
+
+    public static bool HasHpWmiPwmDutyAccess() =>
+        ResolveHpWmiPwmEnablePath(1) != null && ResolveHpWmiPwmPath(1) != null;
 
     public static string? ResolveHpWmiFanTargetPath(int fanIndex)
     {

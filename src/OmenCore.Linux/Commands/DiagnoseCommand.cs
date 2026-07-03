@@ -181,6 +181,7 @@ public static class DiagnoseCommand
         info.EcControllerAvailable = ec.IsAvailable;
         info.IsUnsafeEcModel = ec.IsUnsafeEcModel;
         info.HasHwmonFanAccess = ec.HasHwmonFanAccess;
+        info.HasHwmonPwmDutyAccess = ec.HasHwmonPwmDutyAccess;
         info.GpuTelemetrySource = gpuReading?.Source ?? "unavailable";
         info.GpuTelemetryPath = gpuReading?.Path ?? string.Empty;
 
@@ -196,6 +197,7 @@ public static class DiagnoseCommand
             info.HpWmiFan1TargetExists,
             info.HpWmiFan2TargetExists,
             info.HasHwmonFanAccess,
+            info.HasHwmonPwmDutyAccess,
             info.EcIoPathExists || info.HpWmiPathExists,
             info.IsUnsafeEcModel,
             info.Model,
@@ -966,6 +968,7 @@ public class DiagnoseInfo
     public bool EcControllerAvailable { get; set; }
     public bool IsUnsafeEcModel { get; set; }
     public bool HasHwmonFanAccess { get; set; }
+    public bool HasHwmonPwmDutyAccess { get; set; }
     public Dictionary<string, object>? EcDiagnostics { get; set; }
     public string CapabilityClass { get; set; } = "unsupported-control";
     public string CapabilityReason { get; set; } = string.Empty;

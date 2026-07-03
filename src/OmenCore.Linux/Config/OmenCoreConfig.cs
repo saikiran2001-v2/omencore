@@ -20,11 +20,10 @@ public class OmenCoreConfig
     public StartupConfig Startup { get; set; } = new();
     public ReliabilityConfig Reliability { get; set; } = new();
 
-    private static readonly string DefaultConfigDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".config", "omencore");
+    private static readonly string DefaultConfigDir = OmenCorePaths.GetUserConfigDirectory();
 
-    public static string DefaultConfigPath => Path.Combine(DefaultConfigDir, "config.toml");
+    public static string DefaultConfigPath => OmenCorePaths.GetUserConfigPath();
+    public static string SharedConfigPath => OmenCorePaths.SharedConfigPath;
     public static string SystemConfigPath => "/etc/omencore/config.toml";
 
     // Last load report is intentionally static so diagnostics can report parse/migration details.
@@ -45,8 +44,9 @@ public class OmenCoreConfig
         }
         else
         {
-            // System config first, then user config (user overrides system).
+            // System config first, shared runtime config, then user overrides.
             paths.Add(SystemConfigPath);
+            paths.Add(SharedConfigPath);
             paths.Add(DefaultConfigPath);
         }
 
@@ -141,6 +141,9 @@ public class OmenCoreConfig
             enabled = false
             # Hysteresis in degrees - prevents fan speed oscillation
             hysteresis = 3
+            # Seconds to wait before changing fan speed (filters brief temperature spikes)
+            ramp_up_delay = 1.0
+            ramp_down_delay = 3.0
             # Fan curve points: temperature (degrees C) -> fan speed (%)
             [[fan.curve.points]]
             temp = 40
@@ -360,6 +363,10 @@ public class OmenCoreConfig
                     config.Fan.Curve.Enabled = enabled;
                 if (GetInt(curve, "hysteresis") is { } hysteresis)
                     config.Fan.Curve.Hysteresis = hysteresis;
+                if (GetDouble(curve, "ramp_up_delay") is { } rampUpDelay)
+                    config.Fan.Curve.RampUpDelaySeconds = rampUpDelay;
+                if (GetDouble(curve, "ramp_down_delay") is { } rampDownDelay)
+                    config.Fan.Curve.RampDownDelaySeconds = rampDownDelay;
                 if (curve.TryGetValue("points", out var pointsObj) && pointsObj is TomlTableArray pointsArray)
                 {
                     var points = new List<FanCurvePoint>();
@@ -426,6 +433,16 @@ public class OmenCoreConfig
                 config.Keyboard.Color = color;
             if (GetInt(keyboard, "brightness") is { } brightness)
                 config.Keyboard.Brightness = brightness;
+            if (GetString(keyboard, "zone1_color") is { } zone1)
+                config.Keyboard.Zone1Color = zone1;
+            if (GetString(keyboard, "zone2_color") is { } zone2)
+                config.Keyboard.Zone2Color = zone2;
+            if (GetString(keyboard, "zone3_color") is { } zone3)
+                config.Keyboard.Zone3Color = zone3;
+            if (GetString(keyboard, "zone4_color") is { } zone4)
+                config.Keyboard.Zone4Color = zone4;
+            if (GetInt(keyboard, "animation_mode") is { } animationMode)
+                config.Keyboard.AnimationMode = animationMode;
         }
 
         if (TryGetTable(root, "startup", out var startup))
@@ -472,6 +489,8 @@ public class OmenCoreConfig
         config.Fan.Profile = NormalizeFanProfile(config.Fan.Profile);
         config.Battery.Profile = NormalizePerformanceMode(config.Battery.Profile);
         config.Fan.Curve.Hysteresis = Math.Clamp(config.Fan.Curve.Hysteresis, 0, 20);
+        config.Fan.Curve.RampUpDelaySeconds = Math.Clamp(config.Fan.Curve.RampUpDelaySeconds, 0, 30);
+        config.Fan.Curve.RampDownDelaySeconds = Math.Clamp(config.Fan.Curve.RampDownDelaySeconds, 0, 30);
         foreach (var point in config.Fan.Curve.Points)
         {
             point.Temp = Math.Clamp(point.Temp, 20, 110);
@@ -487,6 +506,11 @@ public class OmenCoreConfig
 
         config.Keyboard.Brightness = Math.Clamp(config.Keyboard.Brightness, 0, 100);
         config.Keyboard.Color = NormalizeHexColor(config.Keyboard.Color);
+        config.Keyboard.Zone1Color = NormalizeOptionalHexColor(config.Keyboard.Zone1Color);
+        config.Keyboard.Zone2Color = NormalizeOptionalHexColor(config.Keyboard.Zone2Color);
+        config.Keyboard.Zone3Color = NormalizeOptionalHexColor(config.Keyboard.Zone3Color);
+        config.Keyboard.Zone4Color = NormalizeOptionalHexColor(config.Keyboard.Zone4Color);
+        config.Keyboard.AnimationMode = Math.Clamp(config.Keyboard.AnimationMode, 0, 255);
 
         config.Thermal.ThrottleTempC = Math.Clamp(config.Thermal.ThrottleTempC, 70, 110);
         config.Thermal.RestoreTempC = Math.Clamp(config.Thermal.RestoreTempC, 50, 100);
@@ -563,6 +587,23 @@ public class OmenCoreConfig
         };
     }
 
+    private static double? GetDouble(TomlTable table, string key)
+    {
+        if (!table.TryGetValue(key, out var value) || value is null)
+            return null;
+
+        return value switch
+        {
+            double d => d,
+            float f => f,
+            long l => l,
+            int i => i,
+            string s when double.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
     private static string? GetString(TomlTable table, string key)
     {
         if (!table.TryGetValue(key, out var value))
@@ -616,6 +657,15 @@ public class OmenCoreConfig
         }
 
         return "FF0000";
+    }
+
+    private static string? NormalizeOptionalHexColor(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        var value = input.Trim().TrimStart('#').ToUpperInvariant();
+        return value.Length == 6 && value.All(Uri.IsHexDigit) ? value : null;
     }
 }
 
@@ -684,6 +734,8 @@ public class FanCurveConfig
 {
     public bool Enabled { get; set; } = false;
     public int Hysteresis { get; set; } = 3;
+    public double RampUpDelaySeconds { get; set; } = 1.0;
+    public double RampDownDelaySeconds { get; set; } = 3.0;
     public List<FanCurvePoint> Points { get; set; } = new()
     {
         new() { Temp = 40, Speed = 20 },
@@ -719,6 +771,11 @@ public class KeyboardConfig
     public bool Enabled { get; set; } = true;
     public string Color { get; set; } = "FF0000";
     public int Brightness { get; set; } = 100;
+    public string? Zone1Color { get; set; }
+    public string? Zone2Color { get; set; }
+    public string? Zone3Color { get; set; }
+    public string? Zone4Color { get; set; }
+    public int AnimationMode { get; set; }
 }
 
 public class StartupConfig

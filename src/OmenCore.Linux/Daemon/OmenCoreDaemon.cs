@@ -653,14 +653,44 @@ public class OmenCoreDaemon : IDisposable
         // Apply keyboard settings
         if (_config.Keyboard.Enabled)
         {
-            if (TryParseColor(_config.Keyboard.Color, out var r, out var g, out var b))
+            var appliedZoneColors = false;
+            var zoneColors = new[]
+            {
+                _config.Keyboard.Zone1Color,
+                _config.Keyboard.Zone2Color,
+                _config.Keyboard.Zone3Color,
+                _config.Keyboard.Zone4Color
+            };
+
+            for (var zone = 0; zone < zoneColors.Length; zone++)
+            {
+                var zoneColor = zoneColors[zone];
+                if (string.IsNullOrWhiteSpace(zoneColor))
+                    continue;
+
+                if (TryParseColor(zoneColor, out var zoneR, out var zoneG, out var zoneB)
+                    && _keyboard.SetZoneColor(zone, zoneR, zoneG, zoneB))
+                {
+                    appliedZoneColors = true;
+                    Log($"  Keyboard zone {zone + 1} color: #{zoneColor.Trim().TrimStart('#').ToUpperInvariant()}");
+                }
+            }
+
+            if (!appliedZoneColors
+                && TryParseColor(_config.Keyboard.Color, out var r, out var g, out var b))
             {
                 _keyboard.SetAllZonesColor(r, g, b);
                 Log($"  Keyboard color: #{_config.Keyboard.Color}");
             }
-            
+
             _keyboard.SetBrightness(_config.Keyboard.Brightness);
             Log($"  Keyboard brightness: {_config.Keyboard.Brightness}%");
+
+            if (_config.Keyboard.AnimationMode > 0)
+            {
+                _keyboard.SetAnimationMode((byte)_config.Keyboard.AnimationMode);
+                Log($"  Keyboard animation: {_config.Keyboard.AnimationMode}");
+            }
         }
         
         Log("Startup configuration applied");
@@ -743,19 +773,19 @@ public class OmenCoreDaemon : IDisposable
         {
             return;
         }
-        
+
         try
         {
             _configWatcher = new FileSystemWatcher(configDir, "config.toml")
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.CreationTime
             };
-            
+
             _configWatcher.Changed += (_, _) =>
             {
                 Log("Configuration file changed - restart daemon to apply");
             };
-            
+
             _configWatcher.EnableRaisingEvents = true;
         }
         catch (Exception ex)
@@ -763,7 +793,7 @@ public class OmenCoreDaemon : IDisposable
             Log($"Warning: Could not setup config watcher: {ex.Message}");
         }
     }
-    
+
     private void OnFanSpeedChange(int temp, int targetSpeed, int actualSpeed)
     {
         // Additional logging or actions on fan speed change

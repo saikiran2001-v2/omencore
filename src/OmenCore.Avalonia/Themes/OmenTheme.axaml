@@ -455,20 +455,55 @@
     </Style>
     
     <Style Selector="NumericUpDown">
+        <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="Background" Value="#1A1A1F" />
         <Setter Property="BorderBrush" Value="#2C2C33" />
         <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="MinHeight" Value="36" />
+        <Setter Property="MinWidth" Value="72" />
+        <Setter Property="Padding" Value="8,6" />
+        <Setter Property="FormatString" Value="0" />
+        <Setter Property="AllowSpin" Value="True" />
+        <Setter Property="ShowButtonSpinner" Value="True" />
+    </Style>
+
+    <Style Selector="NumericUpDown:focus">
+        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+    </Style>
+
+    <Style Selector="NumericUpDown /template/ TextBox">
+        <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="4,2" />
     </Style>
     
     <Style Selector="TextBox">
+        <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        <Setter Property="CaretBrush" Value="{StaticResource PrimaryTextBrush}" />
         <Setter Property="Background" Value="#1A1A1F" />
         <Setter Property="BorderBrush" Value="#2C2C33" />
         <Setter Property="CornerRadius" Value="4" />
         <Setter Property="Padding" Value="10,8" />
     </Style>
+
+    <Style Selector="TextBox.numberInput">
+        <Setter Property="MinWidth" Value="96" />
+        <Setter Property="Width" Value="96" />
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Padding" Value="12,10" />
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontFamily" Value="Inter,Segoe UI,sans-serif" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="TextAlignment" Value="Center" />
+    </Style>
     
     <Style Selector="TextBox:focus">
         <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+    </Style>
+
+    <Style Selector="TextBox.numberInput:focus">
+        <Setter Property="Background" Value="#222228" />
     </Style>
     
     <!-- ==================== Progress & Status ==================== -->

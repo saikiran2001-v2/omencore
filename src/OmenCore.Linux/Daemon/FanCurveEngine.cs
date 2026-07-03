@@ -9,6 +9,7 @@ namespace OmenCore.Linux.Daemon;
 /// Features:
 /// - Configurable temperature/speed curve points
 /// - Hysteresis to prevent fan speed oscillation
+/// - Ramp-up/ramp-down delays to ignore brief temperature spikes
 /// - Smooth transitions between speed levels
 /// - Both CPU and GPU temperature monitoring
 /// - Battery-aware profiles (quieter on battery power)
@@ -21,7 +22,10 @@ public class FanCurveEngine : IDisposable
     private readonly CancellationTokenSource _cts = new();
     
     private int _lastTargetSpeed = -1;
-    private int _lastMaxTemp = 0;
+    private int _committedCurveTarget = -1;
+    private int _lastCommittedMaxTemp;
+    private int _pendingCurveTarget = -1;
+    private DateTime _pendingTargetSinceUtc = DateTime.MinValue;
     private bool _isRunning;
     private bool _lastBatteryState;
     private IReadOnlyList<FanCurvePoint>? _sortedCurvePoints;
@@ -126,27 +130,56 @@ public class FanCurveEngine : IDisposable
         // Use the higher of CPU/GPU temps for fan control
         var maxTemp = Math.Max(cpuTemp, gpuTemp);
         
-        // Apply hysteresis to prevent oscillation
-        if (_lastTargetSpeed >= 0)
-        {
-            var hysteresis = _config.Fan.Curve.Hysteresis;
-            // Only change speed if temp moved significantly
-            if (Math.Abs(maxTemp - _lastMaxTemp) < hysteresis)
-            {
-                return; // Skip this cycle
-            }
-        }
-        
-        _lastMaxTemp = maxTemp;
-        
         // Calculate target speed from curve
-        var targetSpeed = CalculateSpeedFromCurve(maxTemp);
+        var curveTarget = CalculateSpeedFromCurve(maxTemp);
         
         // Apply battery-aware reduction (but keep minimum if temp is critical)
         if (BatteryAwareEnabled && _lastBatteryState && maxTemp < 85)
         {
-            targetSpeed = Math.Max(20, targetSpeed - BatterySpeedReduction);
+            curveTarget = Math.Max(20, curveTarget - BatterySpeedReduction);
         }
+
+        if (curveTarget != _committedCurveTarget)
+        {
+            // Temperature dead-zone: ignore small fluctuations around the last committed reading
+            if (_committedCurveTarget >= 0)
+            {
+                var hysteresis = _config.Fan.Curve.Hysteresis;
+                if (Math.Abs(maxTemp - _lastCommittedMaxTemp) < hysteresis)
+                {
+                    _pendingCurveTarget = -1;
+                    return;
+                }
+            }
+
+            // Time-based confirmation: wait for sustained temperature before changing fan speed
+            var isIncrease = _committedCurveTarget < 0 || curveTarget > _committedCurveTarget;
+            var rampDelaySeconds = isIncrease
+                ? _config.Fan.Curve.RampUpDelaySeconds
+                : _config.Fan.Curve.RampDownDelaySeconds;
+
+            if (rampDelaySeconds > 0)
+            {
+                var now = DateTime.UtcNow;
+                if (_pendingCurveTarget != curveTarget)
+                {
+                    _pendingCurveTarget = curveTarget;
+                    _pendingTargetSinceUtc = now;
+                    return;
+                }
+
+                if ((now - _pendingTargetSinceUtc).TotalSeconds < rampDelaySeconds)
+                {
+                    return;
+                }
+            }
+
+            _committedCurveTarget = curveTarget;
+            _lastCommittedMaxTemp = maxTemp;
+            _pendingCurveTarget = -1;
+        }
+
+        var targetSpeed = curveTarget;
         
         // Apply smooth transition if enabled
         if (_config.Fan.SmoothTransition && _lastTargetSpeed >= 0)

@@ -77,7 +77,9 @@ public partial class ZoneColorViewModel : ObservableObject
 public partial class SystemControlViewModel : ObservableObject
 {
     private readonly IHardwareService _hardwareService;
+    private readonly IUserPreferencesService _preferences;
     private bool _suppressPerformanceModeSelectionChange;
+    private bool _isRestoringPreferences;
     private string _performanceProfileReason = "Performance mode control is unavailable on this Linux board/kernel path.";
     private bool _canSetKeyboardBrightness = true;
     private string _keyboardBrightnessReason = "Keyboard brightness control is unavailable on this Linux board/kernel path.";
@@ -151,9 +153,10 @@ public partial class SystemControlViewModel : ObservableObject
         new("Zone 4 — WASD"),
     };
 
-    public SystemControlViewModel(IHardwareService hardwareService)
+    public SystemControlViewModel(IHardwareService hardwareService, IUserPreferencesService preferences)
     {
         _hardwareService = hardwareService;
+        _preferences = preferences;
         _ = InitializeAsync();
     }
 
@@ -194,11 +197,75 @@ public partial class SystemControlViewModel : ObservableObject
             CurrentGpuMode = await _hardwareService.GetGpuModeAsync();
 
             HasNvidiaSettings = capabilities.HasNvidiaSettings;
+
+            _ = ScheduleRestoreKeyboardPreferencesAsync();
         }
         catch (Exception ex)
         {
             StatusMessage = $"Initialization error: {ex.Message}";
         }
+    }
+
+    private Task ScheduleRestoreKeyboardPreferencesAsync()
+    {
+        return Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(750);
+                await RestoreKeyboardPreferencesAsync();
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Failed to restore keyboard lighting: {ex.Message}";
+            }
+        });
+    }
+
+    private async Task RestoreKeyboardPreferencesAsync()
+    {
+        var kb = _preferences.Current.Keyboard;
+        _isRestoringPreferences = true;
+        try
+        {
+            ZoneColors[0].SetColor((byte)kb.Zone1R, (byte)kb.Zone1G, (byte)kb.Zone1B);
+            ZoneColors[1].SetColor((byte)kb.Zone2R, (byte)kb.Zone2G, (byte)kb.Zone2B);
+            ZoneColors[2].SetColor((byte)kb.Zone3R, (byte)kb.Zone3G, (byte)kb.Zone3B);
+            ZoneColors[3].SetColor((byte)kb.Zone4R, (byte)kb.Zone4G, (byte)kb.Zone4B);
+            KeyboardBrightness = Math.Clamp(kb.Brightness, 0, 100);
+            UpdateKeyboardAnimationSelection(kb.AnimationIndex);
+
+            if (HasFourZoneRgb || HasKeyboardBacklight)
+                await ApplyLightingAsync();
+        }
+        finally
+        {
+            _isRestoringPreferences = false;
+        }
+    }
+
+    private async Task PersistKeyboardPreferencesAsync()
+    {
+        if (_isRestoringPreferences)
+            return;
+
+        var kb = _preferences.Current.Keyboard;
+        kb.Brightness = KeyboardBrightness;
+        kb.AnimationIndex = SelectedKeyboardAnimationIndex;
+        kb.Zone1R = ZoneColors[0].R;
+        kb.Zone1G = ZoneColors[0].G;
+        kb.Zone1B = ZoneColors[0].B;
+        kb.Zone2R = ZoneColors[1].R;
+        kb.Zone2G = ZoneColors[1].G;
+        kb.Zone2B = ZoneColors[1].B;
+        kb.Zone3R = ZoneColors[2].R;
+        kb.Zone3G = ZoneColors[2].G;
+        kb.Zone3B = ZoneColors[2].B;
+        kb.Zone4R = ZoneColors[3].R;
+        kb.Zone4G = ZoneColors[3].G;
+        kb.Zone4B = ZoneColors[3].B;
+
+        await _preferences.SaveAndSyncDaemonConfigAsync();
     }
 
     partial void OnSelectedPerformanceModeIndexChanged(int value)
@@ -307,9 +374,11 @@ public partial class SystemControlViewModel : ObservableObject
     private async Task ApplyLightingAsync()
     {
         double factor = Math.Clamp(KeyboardBrightness, 0, 100) / 100.0;
+        var directApplySucceeded = false;
 
         if (HasFourZoneRgb)
         {
+            var failedZones = 0;
             for (int i = 0; i < ZoneColors.Length; i++)
             {
                 var zone = ZoneColors[i];
@@ -319,16 +388,23 @@ public partial class SystemControlViewModel : ObservableObject
                 try
                 {
                     await _hardwareService.SetKeyboardZoneColorAsync(i, r, g, b);
+                    directApplySucceeded = true;
                 }
-                catch (Exception ex)
+                catch
                 {
-                    StatusMessage = $"Zone {i + 1} error: {ex.Message}";
-                    return;
+                    failedZones++;
                 }
             }
 
-            // Manual color writes cancel any running software animation in the
-            // hardware service — reflect that in the animation selector.
+            if (failedZones == ZoneColors.Length)
+            {
+                StatusMessage = "Saved lighting — the daemon will apply it shortly (no direct sysfs access).";
+            }
+            else if (failedZones > 0)
+            {
+                StatusMessage = "Partially applied lighting; saved remaining settings for the daemon.";
+            }
+
             UpdateKeyboardAnimationSelection(0);
         }
         else if (_canSetKeyboardBrightness)
@@ -336,12 +412,18 @@ public partial class SystemControlViewModel : ObservableObject
             try
             {
                 await _hardwareService.SetKeyboardBrightnessAsync(KeyboardBrightness);
+                directApplySucceeded = true;
             }
-            catch (Exception ex)
+            catch
             {
-                StatusMessage = $"Brightness error: {ex.Message}";
+                StatusMessage = "Saved brightness — the daemon will apply it shortly.";
             }
         }
+
+        await PersistKeyboardPreferencesAsync();
+
+        if (directApplySucceeded && string.IsNullOrWhiteSpace(StatusMessage))
+            StatusMessage = "Keyboard lighting applied";
     }
 
     [RelayCommand]
@@ -412,6 +494,7 @@ public partial class SystemControlViewModel : ObservableObject
             await _hardwareService.SetKeyboardAnimationModeAsync(mode);
             CurrentKeyboardAnimation = KeyboardAnimations[Math.Clamp(index, 0, KeyboardAnimations.Length - 1)];
             StatusMessage = $"Keyboard animation set to {CurrentKeyboardAnimation}";
+            await PersistKeyboardPreferencesAsync();
         }
         catch (Exception ex)
         {

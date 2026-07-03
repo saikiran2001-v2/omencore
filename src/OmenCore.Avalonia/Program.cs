@@ -502,6 +502,13 @@ internal sealed class Program
         }
     }
 
+    private static bool IsRootLaunch()
+    {
+        return string.Equals(Environment.GetEnvironmentVariable("USER"), "root", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Environment.UserName, "root", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Environment.GetEnvironmentVariable("LOGNAME"), "root", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void PrepareLinuxDesktopEnvironment()
     {
         if (!OperatingSystem.IsLinux())
@@ -509,11 +516,7 @@ internal sealed class Program
             return;
         }
 
-        var isRootLaunch = string.Equals(Environment.GetEnvironmentVariable("USER"), "root", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Environment.UserName, "root", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Environment.GetEnvironmentVariable("LOGNAME"), "root", StringComparison.OrdinalIgnoreCase);
-
-        if (!isRootLaunch)
+        if (!IsRootLaunch())
         {
             return;
         }

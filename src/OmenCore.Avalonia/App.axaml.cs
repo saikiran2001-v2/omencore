@@ -61,6 +61,7 @@ public partial class App : Application
         });
         
         // Services
+        services.AddSingleton<IUserPreferencesService, UserPreferencesService>();
         services.AddSingleton<IHardwareService, LinuxHardwareService>();
         services.AddSingleton<IConfigurationService, ConfigurationService>();
         services.AddSingleton<IFanCurveService, FanCurveService>();

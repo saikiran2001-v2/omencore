@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using OmenCore.Linux.Daemon;
 using OmenCore.Linux.Hardware;
 
 namespace OmenCore.Avalonia.Services;
@@ -10,12 +11,16 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 {
     private readonly System.Timers.Timer _pollingTimer;
     private readonly SemaphoreSlim _ioLock = new(1, 1);
+    private readonly SemaphoreSlim _capabilitiesLock = new(1, 1);
     private HardwareStatus _lastStatus = new();
     private SystemCapabilities? _capabilities;
     private bool _disposed;
     private bool _pollingInProgress;
     private PerformanceMode? _lastFanFallbackMode;
     private OmenCore.Linux.Hardware.FanProfile _activeFanProfile = OmenCore.Linux.Hardware.FanProfile.Auto;
+
+    private readonly Lazy<LinuxHwMonController> _hwmon = new(() => new LinuxHwMonController());
+    private readonly Lazy<LinuxEcController> _ec = new(() => new LinuxEcController());
 
     // Long-lived keyboard controller + software animation engine.
     // Firmware has no native four-zone animations; effects are rendered by
@@ -204,17 +209,29 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         if (_capabilities != null)
             return _capabilities;
 
-        var pending = new SystemCapabilities();
+        await _capabilitiesLock.WaitAsync();
         try
         {
-            await PopulateCapabilitiesAsync(pending);
-            _capabilities = pending;
+            if (_capabilities != null)
+                return _capabilities;
+
+            var pending = new SystemCapabilities();
+            try
+            {
+                await PopulateCapabilitiesAsync(pending);
+                _capabilities = pending;
+            }
+            catch
+            {
+                // Don't cache a half-initialised object — let the next call retry.
+            }
+
+            return _capabilities ?? pending;
         }
-        catch
+        finally
         {
-            // Don't cache a half-initialised object — let the next call retry.
+            _capabilitiesLock.Release();
         }
-        return _capabilities ?? pending;
     }
 
     private async Task PopulateCapabilitiesAsync(SystemCapabilities cap)
@@ -263,12 +280,14 @@ public class LinuxHardwareService : IHardwareService, IDisposable
             ResolveHwmonFanTargetPath(1) != null,
             ResolveHwmonFanTargetPath(2) != null,
             ResolveHwmonPwmEnablePath(1) != null || ResolveHwmonPwmEnablePath(2) != null,
+            LinuxSysfsPathMap.HasHpWmiPwmDutyAccess(),
             Directory.Exists(HWMON_BASE) || Directory.Exists(HP_WMI_PATH),
             IsUnsafeEcModel(),
             await ReadDmiStringAsync("product_name"),
             await ReadDmiStringAsync("board_name"));
         _capabilities.SupportsFanControl = capabilityAssessment.SupportsManualFanControl;
         _capabilities.SupportsFanSurface = capabilityAssessment.SupportsManualFanControl || capabilityAssessment.SupportsProfileControl || capabilityAssessment.SupportsTelemetry;
+        _capabilities.SupportsHwmonPwmDuty = LinuxSysfsPathMap.HasHpWmiPwmDutyAccess();
         _capabilities.SupportsPerformanceProfiles = capabilityAssessment.SupportsProfileControl || ResolvePowerProfilesCtlPath() != null;
         _capabilities.PerformanceProfileReason = _capabilities.SupportsPerformanceProfiles
             ? string.Empty
@@ -744,6 +763,13 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         {
             int clamped = Math.Clamp(percentage, 0, 100);
 
+            var ec = new OmenCore.Linux.Hardware.LinuxEcController();
+            if (ec.HasHwmonPwmDutyAccess)
+            {
+                ec.SetHwmonPwmDutyPercent(clamped);
+                return;
+            }
+
             await TryEnableManualFanOverrideAsync();
 
             // Prefer direct hp-wmi fan output when exposed by kernel/firmware.
@@ -788,6 +814,14 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         await ExecuteWithIoLockAsync(async () =>
         {
             int clamped = Math.Clamp(percentage, 0, 100);
+
+            var ec = new OmenCore.Linux.Hardware.LinuxEcController();
+            if (ec.HasHwmonPwmDutyAccess)
+            {
+                // Single pwm1 on many OMEN boards drives both fans together.
+                ec.SetHwmonPwmDutyPercent(clamped);
+                return;
+            }
 
             await TryEnableManualFanOverrideAsync();
 
@@ -1153,58 +1187,96 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         return 0;
     }
 
-    private static async Task<int> ReadGpuTemperatureAsync()
+    private async Task<int> ReadGpuTemperatureAsync()
     {
-        foreach (var hwmon in SafeEnumerateDirectories(HWMON_BASE))
-        {
-            try
-            {
-                var namePath = Path.Combine(hwmon, "name");
-                if (!File.Exists(namePath)) continue;
+        var reading = LinuxTelemetryResolver.GetGpuTemperature(_ec.Value, _hwmon.Value);
+        if (reading?.Temperature is > 0 and var celsius)
+            return celsius * 1000;
 
-                var name = (await File.ReadAllTextAsync(namePath)).Trim().ToLower();
-                if (name == "amdgpu" ||
-                    name == "nouveau" ||
-                    name.Contains("nvidia") ||
-                    name.Contains("radeon") ||
-                    name.Contains("gpu") ||
-                    name.Contains("i915") ||
-                    name.Contains("intel"))
-                {
-                    var tempFiles = new[] { "temp1_input", "temp2_input", "temp3_input", "edge", "junction" };
-                    foreach (var tempFile in tempFiles)
-                    {
-                        var tempPath = Path.Combine(hwmon, tempFile);
-                        if (File.Exists(tempPath))
-                        {
-                            var tempStr = await File.ReadAllTextAsync(tempPath);
-                            if (int.TryParse(tempStr.Trim(), out var temp) && temp > 0)
-                                return temp;
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
+        var nvidiaSmiTemp = await ReadNvidiaSmiTemperatureMillidegreesAsync();
+        if (nvidiaSmiTemp > 0)
+            return nvidiaSmiTemp;
 
-        // Fallback: read GPU temperature from EC register 0xB7 (HP OMEN hybrid GPU path)
-        try
-        {
-            var ec = new OmenCore.Linux.Hardware.LinuxEcController();
-            var ecTemp = ec.GetGpuTemperature();
-            if (ecTemp.HasValue && ecTemp.Value > 0)
-                return ecTemp.Value * 1000; // EC returns °C, callers expect millidegrees
-        }
-        catch { }
+        var daemonTemp = ReadDaemonSnapshotGpuTemperatureC();
+        if (daemonTemp > 0)
+            return daemonTemp * 1000;
 
         return 0;
     }
 
+    private static int ReadDaemonSnapshotGpuTemperatureC()
+    {
+        try
+        {
+            var snapshot = ReliabilityDiagnosticsStore.ReadSnapshot();
+            if (snapshot?.GpuTempC is not > 0)
+                return 0;
+
+            var ageSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - snapshot.UpdatedAtUnix;
+            if (ageSeconds is < 0 or > 90)
+                return 0;
+
+            return snapshot.GpuTempC;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static async Task<int> ReadNvidiaSmiTemperatureMillidegreesAsync()
+    {
+        var nvidiaSmi = ResolveNvidiaSmiPath();
+        if (nvidiaSmi == null)
+            return 0;
+
+        try
+        {
+            using var proc = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = nvidiaSmi,
+                    Arguments = "--query-gpu=temperature.gpu --format=csv,noheader,nounits",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+            proc.Start();
+            var stdout = await proc.StandardOutput.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+            if (proc.ExitCode != 0)
+                return 0;
+
+            var line = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault();
+            if (line == null)
+                return 0;
+
+            if (double.TryParse(line, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var celsius)
+                && celsius is > 0 and < 150)
+            {
+                return (int)Math.Round(celsius * 1000.0);
+            }
+        }
+        catch
+        {
+            // Fall through to other sources.
+        }
+
+        return 0;
+    }
+
+    private static string? ResolveNvidiaSmiPath() =>
+        new[] { "/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi" }.FirstOrDefault(File.Exists);
+
     private static async Task<double> ReadGpuUsageAsync()
     {
         // NVIDIA: query via nvidia-smi
-        var nvidiaSmi = new[] { "/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi" }
-            .FirstOrDefault(File.Exists);
+        var nvidiaSmi = ResolveNvidiaSmiPath();
         if (nvidiaSmi != null)
         {
             try

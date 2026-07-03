@@ -2,19 +2,18 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:OmenCore.Avalonia.ViewModels"
              x:Class="OmenCore.Avalonia.Views.FanControlView"
+             x:Name="FanRoot"
              x:DataType="vm:FanControlViewModel">
     
     <ScrollViewer>
         <StackPanel Spacing="14" MaxWidth="1150">
             
-            <!-- Page Header -->
             <StackPanel Spacing="4" Margin="0,0,0,6">
                 <TextBlock Classes="kicker" Text="COOLING" />
                 <TextBlock Classes="pageHeader" Text="Fan Control" />
                 <TextBlock Classes="label" Text="Fan profiles and real-time monitoring" Margin="0,2,0,0" />
             </StackPanel>
 
-            <!-- Capability Warning -->
             <Border Classes="warningBanner" IsVisible="{Binding ShowCapabilityWarning}">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <TextBlock Text="!" FontSize="14" FontWeight="Bold" Foreground="#FFA226" />
@@ -22,7 +21,7 @@
                 </StackPanel>
             </Border>
             
-            <!-- Live Telemetry Tiles -->
+            <!-- Telemetry -->
             <Grid ColumnDefinitions="*,*,*,*">
                 <Border Grid.Column="0" Classes="cardInteractive" Margin="0,0,10,0">
                     <StackPanel Spacing="2">
@@ -60,25 +59,25 @@
                 </Border>
             </Grid>
             
-            <!-- Fan Profiles -->
+            <!-- Fan mode: Auto / Manual / Max -->
             <Border Classes="card" IsVisible="{Binding HasFanProfileAccess}">
-                <StackPanel>
-                    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                <StackPanel Spacing="14">
+                    <Grid ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
                             <Rectangle Classes="accentBar" Height="16" />
-                            <TextBlock Classes="sectionHeader" Text="Fan Profiles" VerticalAlignment="Center" />
+                            <TextBlock Classes="sectionHeader" Text="Fan Mode" VerticalAlignment="Center" />
                         </StackPanel>
                         <Border Grid.Column="1" Classes="badgeData" VerticalAlignment="Center">
                             <TextBlock Text="{Binding ActiveFanProfile}" />
                         </Border>
                     </Grid>
-                    <TextBlock Classes="caption" Margin="13,0,0,16" TextWrapping="Wrap"
-                               Text="Auto and Constant keep BIOS fan control. Max forces immediate full speed." />
+                    <TextBlock Classes="caption" Margin="13,0,0,0" TextWrapping="Wrap"
+                               Text="Auto returns control to BIOS. Manual exposes PWM speed and custom curves. Max forces full speed immediately." />
                     
                     <Grid ColumnDefinitions="*,*,*">
                         <Button Grid.Column="0" Classes="modeTile" Margin="0,0,10,0"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="auto"
-                                ToolTip.Tip="BIOS manages fans with balanced thermal policy">
+                                ToolTip.Tip="BIOS manages fans (pwm_enable=2)">
                             <StackPanel HorizontalAlignment="Center" Spacing="4">
                                 <TextBlock Text="AUTO" FontSize="15" FontWeight="Bold" LetterSpacing="1.5"
                                            HorizontalAlignment="Center" Foreground="{DynamicResource OmenBlueBrush}" />
@@ -86,17 +85,18 @@
                             </StackPanel>
                         </Button>
                         <Button Grid.Column="1" Classes="modeTile" Margin="0,0,10,0"
-                                Command="{Binding SetFanProfileCommand}" CommandParameter="constant"
-                                ToolTip.Tip="Always BIOS auto (no fan-stop logic) for users who want continuous fan activity">
+                                Command="{Binding SetFanProfileCommand}" CommandParameter="manual"
+                                IsEnabled="{Binding CanEditFanCurve}"
+                                ToolTip.Tip="Direct PWM control via hp-wmi hwmon">
                             <StackPanel HorizontalAlignment="Center" Spacing="4">
-                                <TextBlock Text="CONSTANT" FontSize="15" FontWeight="Bold" LetterSpacing="1.5"
+                                <TextBlock Text="MANUAL" FontSize="15" FontWeight="Bold" LetterSpacing="1.5"
                                            HorizontalAlignment="Center" Foreground="{DynamicResource PrimaryTextBrush}" />
-                                <TextBlock Classes="caption" Text="No fan-stop" HorizontalAlignment="Center" />
+                                <TextBlock Classes="caption" Text="PWM / curve" HorizontalAlignment="Center" />
                             </StackPanel>
                         </Button>
                         <Button Grid.Column="2" Classes="modeTile"
                                 Command="{Binding SetFanProfileCommand}" CommandParameter="max"
-                                ToolTip.Tip="Immediately forces both fans to maximum speed (pwm_enable=0)">
+                                ToolTip.Tip="Forces both fans to maximum speed (pwm_enable=0)">
                             <StackPanel HorizontalAlignment="Center" Spacing="4">
                                 <TextBlock Text="MAX" FontSize="15" FontWeight="Bold" LetterSpacing="1.5"
                                            HorizontalAlignment="Center" Foreground="#FF5C77" />
@@ -107,7 +107,155 @@
                 </StackPanel>
             </Border>
 
-            <!-- Reliability Diagnostics -->
+            <!-- Manual controls — only when Manual mode is selected -->
+            <Border Classes="card" IsVisible="{Binding IsManualControlsVisible}">
+                <StackPanel Spacing="16">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Rectangle Classes="accentBar" Height="16" />
+                        <TextBlock Classes="sectionHeader" Text="Manual Fan Control" VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <TextBlock Classes="caption" Margin="13,0,0,0" TextWrapping="Wrap"
+                               Text="Choose fixed PWM duty or a temperature-driven custom curve."
+                               IsVisible="{Binding UsesUnifiedPwm}" />
+
+                    <!-- Fixed speed vs custom curve -->
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="13,0,0,0">
+                        <Button Classes="modeTile" Padding="14,10"
+                                Command="{Binding SetManualControlTypeCommand}" CommandParameter="fixed">
+                            <TextBlock Text="Fixed speed" FontWeight="SemiBold" />
+                        </Button>
+                        <Button Classes="modeTile" Padding="14,10"
+                                Command="{Binding SetManualControlTypeCommand}" CommandParameter="curve">
+                            <TextBlock Text="Custom curve" FontWeight="SemiBold" />
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Fixed speed slider -->
+                    <StackPanel Spacing="10" IsVisible="{Binding IsFixedSpeedVisible}" Margin="13,0,0,0">
+                        <TextBlock Classes="label" Text="Fan speed" />
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                            <TextBlock Grid.Column="0" Classes="caption" Text="1%" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1"
+                                    Minimum="1" Maximum="100"
+                                    Value="{Binding ManualFanSpeed}"
+                                    Margin="12,0" />
+                            <TextBlock Grid.Column="2"
+                                       Classes="value"
+                                       Text="{Binding ManualFanSpeed, StringFormat={}{0}%}"
+                                       VerticalAlignment="Center" MinWidth="42" />
+                            <TextBlock Grid.Column="3"
+                                       Classes="caption"
+                                       Text="{Binding ManualFanPwm, StringFormat=pwm {0}}"
+                                       VerticalAlignment="Center"
+                                       Margin="12,0,0,0" />
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Custom curve editor -->
+                    <StackPanel Spacing="14" IsVisible="{Binding IsCurveEditorVisible}" Margin="13,0,0,0">
+                        <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" Margin="0,0,0,0">
+                            <TextBlock Grid.Row="0" Grid.Column="0" Classes="caption" Text="Preset" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <ComboBox ItemsSource="{Binding Presets}"
+                                          SelectedItem="{Binding SelectedPreset}"
+                                          MinWidth="180" HorizontalAlignment="Left" />
+                                <TextBox Text="{Binding PresetRenameText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                         Watermark="Rename to…"
+                                         MinWidth="140"
+                                         Classes="numberInput" />
+                                <Button Content="Rename"
+                                        Command="{Binding RenamePresetCommand}"
+                                        IsEnabled="{Binding CanRenameSelectedPreset}"
+                                        Classes="secondary" Padding="10,6" />
+                                <Button Content="Delete preset"
+                                        Command="{Binding DeletePresetCommand}"
+                                        IsEnabled="{Binding CanDeleteSelectedPreset}"
+                                        Classes="secondary" Padding="10,6" />
+                            </StackPanel>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Classes="caption" Text="Hysteresis °C" VerticalAlignment="Center" Margin="0,10,12,0" />
+                            <TextBox Grid.Row="1" Grid.Column="1"
+                                     Classes="numberInput"
+                                     Text="{Binding CurveHysteresisText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     Margin="0,10,0,0"
+                                     HorizontalAlignment="Left" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Classes="caption" Text="Ramp-up delay (s)" VerticalAlignment="Center" Margin="0,10,12,0"
+                                       ToolTip.Tip="Wait this long before increasing fan speed when temperature rises" />
+                            <TextBox Grid.Row="2" Grid.Column="1"
+                                     Classes="numberInput"
+                                     Text="{Binding CurveRampUpDelayText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     Margin="0,10,0,0"
+                                     HorizontalAlignment="Left" />
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Classes="caption" Text="Ramp-down delay (s)" VerticalAlignment="Center" Margin="0,10,12,0"
+                                       ToolTip.Tip="Wait this long before decreasing fan speed when temperature drops" />
+                            <TextBox Grid.Row="3" Grid.Column="1"
+                                     Classes="numberInput"
+                                     Text="{Binding CurveRampDownDelayText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     Margin="0,10,0,0"
+                                     HorizontalAlignment="Left" />
+                        </Grid>
+
+                        <Border Classes="inner" Padding="12">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Classes="label" Text="Temperature → fan speed" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                        <Button Content="Add point" Command="{Binding AddCpuPointCommand}" Classes="secondary" Padding="10,6" />
+                                        <Button Content="Apply" Command="{Binding ApplyCurveCommand}" Classes="primary" Padding="10,6" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <!-- Header -->
+                                <Grid ColumnDefinitions="120,120,96,*" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="micro" Text="TEMP °C" Margin="4,0,0,0" />
+                                    <TextBlock Grid.Column="1" Classes="micro" Text="FAN %" Margin="4,0,0,0" />
+                                    <TextBlock Grid.Column="2" Classes="micro" Text="PWM" Margin="4,0,0,0" />
+                                </Grid>
+
+                                <ItemsControl ItemsSource="{Binding CpuFanCurve}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:FanCurvePointViewModel">
+                                            <Grid ColumnDefinitions="120,120,96,*" Margin="0,0,0,10">
+                                                <TextBox Grid.Column="0"
+                                                         Classes="numberInput"
+                                                         Text="{Binding TemperatureText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                         Watermark="°C"
+                                                         Margin="0,0,12,0" />
+                                                <TextBox Grid.Column="1"
+                                                         Classes="numberInput"
+                                                         Text="{Binding FanSpeedText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                         Watermark="%"
+                                                         Margin="0,0,12,0" />
+                                                <TextBox Grid.Column="2"
+                                                         Classes="numberInput"
+                                                         Text="{Binding PwmText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                         Watermark="0-255"
+                                                         Margin="0,0,12,0" />
+                                                <Button Grid.Column="3" Content="Remove"
+                                                        Command="{Binding #FanRoot.((vm:FanControlViewModel)DataContext).RemoveCpuPointCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        Classes="secondary" Padding="12,8"
+                                                        VerticalAlignment="Center"
+                                                        HorizontalAlignment="Left" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Button Content="Reset" Command="{Binding ResetToDefaultCommand}" Classes="secondary" />
+                            <Button Content="Save preset" Command="{Binding SavePresetCommand}" Classes="secondary" />
+                            <Button Content="Emergency max" Command="{Binding EmergencyStopCommand}" Classes="danger" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
             <Border Classes="card" IsVisible="{Binding ReliabilityDiagnosticsVisible}">
                 <StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
@@ -129,7 +277,6 @@
                 </StackPanel>
             </Border>
 
-            <!-- Status Message -->
             <Border Classes="infoBanner"
                     IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                 <StackPanel Orientation="Horizontal" Spacing="10">

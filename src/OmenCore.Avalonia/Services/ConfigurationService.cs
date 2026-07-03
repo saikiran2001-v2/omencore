@@ -1,3 +1,5 @@
+using OmenCore.Linux.Config;
+
 namespace OmenCore.Avalonia.Services;
 
 /// <summary>
@@ -36,15 +38,9 @@ public class ConfigurationService : IConfigurationService
 
     public ConfigurationService()
     {
-        var configDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (string.IsNullOrEmpty(configDir))
-        {
-            configDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
-        }
-        
-        var omenConfigDir = Path.Combine(configDir, "omencore");
+        var omenConfigDir = OmenCorePaths.GetUserConfigDirectory();
         Directory.CreateDirectory(omenConfigDir);
-        _configPath = Path.Combine(omenConfigDir, "config.toml");
+        _configPath = OmenCorePaths.GetGuiSettingsPath();
     }
 
     public T? Get<T>(string key)
