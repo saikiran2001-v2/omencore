@@ -106,6 +106,7 @@ public static class UserPreferencesStore
         config.Keyboard.Zone3Color = $"{kb.Zone3R:X2}{kb.Zone3G:X2}{kb.Zone3B:X2}";
         config.Keyboard.Zone4Color = $"{kb.Zone4R:X2}{kb.Zone4G:X2}{kb.Zone4B:X2}";
         config.Keyboard.AnimationMode = kb.AnimationIndex;
+        config.Keyboard.BacklightTimeoutSeconds = Math.Max(0, kb.BacklightTimeoutSeconds);
 
         if (string.Equals(fan.ActiveFanProfile, "manual", StringComparison.OrdinalIgnoreCase)
             && fan.IsCustomCurveEnabled

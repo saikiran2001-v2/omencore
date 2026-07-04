@@ -32,6 +32,7 @@ public class OmenCoreDaemon : IDisposable
     private bool _isRunning;
     private bool _lowOverheadMode;
     private FileSystemWatcher? _configWatcher;
+    private KeyboardIdleMonitor? _keyboardIdleMonitor;
     
     // Thermal watchdog: tracks whether the CPU has been at throttle temp so we can
     // re-apply the configured performance mode once it cools down (some OMEN models
@@ -133,6 +134,9 @@ public class OmenCoreDaemon : IDisposable
         {
             await ApplyStartupConfigAsync();
         }
+
+        // Start the keyboard backlight idle-timeout (BIOS-style) if configured
+        StartKeyboardIdleMonitor();
         
         // Start fan curve engine if enabled
         if (_fanCurveEngine != null)
@@ -696,10 +700,42 @@ public class OmenCoreDaemon : IDisposable
         Log("Startup configuration applied");
         await Task.CompletedTask;
     }
+
+    private void StartKeyboardIdleMonitor()
+    {
+        if (!_config.Keyboard.Enabled || _config.Keyboard.BacklightTimeoutSeconds <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _keyboardIdleMonitor = new KeyboardIdleMonitor(
+                _keyboard,
+                _config.Keyboard.BacklightTimeoutSeconds,
+                _config.Keyboard.Brightness,
+                Log);
+
+            if (!_keyboardIdleMonitor.Start())
+            {
+                _keyboardIdleMonitor.Dispose();
+                _keyboardIdleMonitor = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"[idle] Failed to start keyboard backlight timeout: {ex.Message}");
+            _keyboardIdleMonitor = null;
+        }
+    }
     
     private async Task ShutdownAsync()
     {
         Log("Shutting down...");
+
+        // Stop keyboard idle monitor (restores backlight if it was dimmed)
+        _keyboardIdleMonitor?.Dispose();
+        _keyboardIdleMonitor = null;
         
         // Stop fan curve engine
         _fanCurveEngine?.Stop();
@@ -859,6 +895,7 @@ public class OmenCoreDaemon : IDisposable
     public void Dispose()
     {
         Stop();
+        _keyboardIdleMonitor?.Dispose();
         _fanCurveEngine?.Dispose();
         _configWatcher?.Dispose();
         _cts.Dispose();

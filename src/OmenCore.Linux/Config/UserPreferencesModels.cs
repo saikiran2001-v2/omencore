@@ -22,6 +22,12 @@ public sealed class KeyboardLightingPreferences
     public int Zone4R { get; set; } = 0;
     public int Zone4G { get; set; } = 191;
     public int Zone4B { get; set; } = 255;
+
+    /// <summary>
+    /// Idle timeout (seconds) before the daemon turns the backlight off; 0 = never.
+    /// Mirrors the HP BIOS keyboard backlight timeout so it can be set from the GUI.
+    /// </summary>
+    public int BacklightTimeoutSeconds { get; set; }
 }
 
 public sealed class FanControlPreferences

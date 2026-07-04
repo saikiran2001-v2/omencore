@@ -127,6 +127,48 @@
                 </Grid>
             </Border>
 
+            <!-- GPU Power / NVIDIA Dynamic Boost (live) -->
+            <Border Classes="card" IsVisible="{Binding HasGpuPower}">
+                <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
+                            <Rectangle Classes="accentBar" Height="16" />
+                            <TextBlock Classes="sectionHeader" Text="GPU Power — Dynamic Boost" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <Border Grid.Column="1" Classes="badge">
+                            <TextBlock Text="{Binding DynamicBoostStatus}" />
+                        </Border>
+                    </Grid>
+                    <TextBlock Classes="caption" Margin="13,0,0,0" TextWrapping="Wrap"
+                               Text="NVIDIA shifts the shared power budget between CPU and GPU automatically (nvidia-powerd). Live telemetry — there is no manual per-watt control on Linux." />
+
+                    <!-- Draw + bar (hidden while the dGPU is suspended) -->
+                    <Grid ColumnDefinitions="*,Auto" Margin="0,6,0,0" IsVisible="{Binding !GpuSuspended}">
+                        <TextBlock Grid.Column="0" Classes="micro" Text="CURRENT DRAW" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Foreground="#39FF14" FontWeight="Bold" FontSize="13"
+                                   Text="{Binding GpuPowerDraw, StringFormat={}{0:0.0} W}" />
+                    </Grid>
+                    <ProgressBar IsVisible="{Binding !GpuSuspended}"
+                                 Minimum="0" Maximum="{Binding GpuPowerMaxLimit}"
+                                 Value="{Binding GpuPowerDraw}" Height="6" />
+
+                    <Grid ColumnDefinitions="*,*,*" Margin="0,6,0,0" IsVisible="{Binding !GpuSuspended}">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Classes="micro" Text="LIMIT NOW" />
+                            <TextBlock FontWeight="Bold" Text="{Binding GpuPowerLimit, StringFormat={}{0:0} W}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Classes="micro" Text="BASE TGP" />
+                            <TextBlock Text="{Binding GpuPowerDefaultLimit, StringFormat={}{0:0} W}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Classes="micro" Text="MAX (BOOST)" />
+                            <TextBlock Text="{Binding GpuPowerMaxLimit, StringFormat={}{0:0} W}" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- Keyboard Lighting -->
             <Border Classes="card" IsVisible="{Binding HasKeyboardBacklight}">
                 <StackPanel>
@@ -148,6 +190,18 @@
                             <Slider Value="{Binding KeyboardBrightness}" 
                                     Minimum="0" Maximum="100"
                                     Margin="0,6,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Backlight timeout (BIOS-style idle-off) -->
+                    <Border Classes="inner" Margin="0,0,0,10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Classes="micro" Text="BACKLIGHT TIMEOUT" VerticalAlignment="Center" />
+                            <ComboBox HorizontalAlignment="Stretch"
+                                      ItemsSource="{Binding KeyboardTimeouts}"
+                                      SelectedIndex="{Binding SelectedKeyboardTimeoutIndex, Mode=TwoWay}" />
+                            <TextBlock Classes="caption" TextWrapping="Wrap"
+                                       Text="Turns the backlight off after this much keyboard/touchpad inactivity, like the BIOS setting. Restart the OmenCore daemon to apply changes." />
                         </StackPanel>
                     </Border>
 

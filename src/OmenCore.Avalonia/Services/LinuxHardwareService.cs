@@ -1273,6 +1273,120 @@ public class LinuxHardwareService : IHardwareService, IDisposable
     private static string? ResolveNvidiaSmiPath() =>
         new[] { "/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi" }.FirstOrDefault(File.Exists);
 
+    public async Task<GpuPowerInfo?> GetGpuPowerAsync()
+    {
+        var nvidiaSmi = ResolveNvidiaSmiPath();
+        if (nvidiaSmi == null)
+            return null;
+
+        // Do NOT wake a runtime-suspended dGPU just to read power — that would keep the
+        // GPU powered and defeat Optimus battery saving. Report "suspended" from sysfs
+        // (a free read) and skip nvidia-smi entirely in that case.
+        if (TryGetNvidiaRuntimeStatus(out var runtimeStatus) &&
+            string.Equals(runtimeStatus, "suspended", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GpuPowerInfo(Suspended: true, 0, 0, 0, 0, DynamicBoostActive: false);
+        }
+
+        try
+        {
+            using var proc = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = nvidiaSmi,
+                    // enforced.power.limit is the authoritative current ceiling; power.limit
+                    // can report N/A on laptop GPUs, so we don't rely on it.
+                    Arguments = "--query-gpu=power.draw,enforced.power.limit,power.default_limit,power.max_limit --format=csv,noheader,nounits",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+            proc.Start();
+            var stdout = await proc.StandardOutput.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+            if (proc.ExitCode != 0)
+                return null;
+
+            var line = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(line))
+                return null;
+
+            var parts = line.Split(',', StringSplitOptions.TrimEntries);
+            if (parts.Length < 4)
+                return null;
+
+            static double ParseWatts(string s) =>
+                double.TryParse(s, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : double.NaN;
+
+            var draw = ParseWatts(parts[0]);
+            var limit = ParseWatts(parts[1]);
+            var defaultLimit = ParseWatts(parts[2]);
+            var maxLimit = ParseWatts(parts[3]);
+
+            if (double.IsNaN(limit) || double.IsNaN(defaultLimit) || double.IsNaN(maxLimit))
+                return null;
+            if (double.IsNaN(draw))
+                draw = 0;
+
+            // Dynamic Boost is doing something whenever the enforced ceiling is above base TGP.
+            var boostActive = limit > defaultLimit + 0.5;
+            return new GpuPowerInfo(Suspended: false, draw, limit, defaultLimit, maxLimit, boostActive);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the NVIDIA dGPU's PCI runtime power state from sysfs ("active"/"suspended"/…)
+    /// without touching the driver. Returns false when no NVIDIA card is present.
+    /// </summary>
+    private static bool TryGetNvidiaRuntimeStatus(out string status)
+    {
+        status = string.Empty;
+        foreach (var card in SafeEnumerateDirectories("/sys/class/drm"))
+        {
+            var cardName = Path.GetFileName(card);
+            if (string.IsNullOrWhiteSpace(cardName) ||
+                !cardName.StartsWith("card", StringComparison.Ordinal) ||
+                cardName.Contains('-', StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var devicePath = Path.Combine(card, "device");
+            var vendorPath = Path.Combine(devicePath, "vendor");
+            if (!File.Exists(vendorPath))
+                continue;
+
+            try
+            {
+                var vendor = File.ReadAllText(vendorPath).Trim();
+                if (!string.Equals(vendor, "0x10de", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var statusPath = Path.Combine(devicePath, "power", "runtime_status");
+                if (!File.Exists(statusPath))
+                    return false;
+
+                status = File.ReadAllText(statusPath).Trim();
+                return true;
+            }
+            catch
+            {
+                // Keep scanning other cards.
+            }
+        }
+
+        return false;
+    }
+
     private static async Task<double> ReadGpuUsageAsync()
     {
         // NVIDIA: query via nvidia-smi

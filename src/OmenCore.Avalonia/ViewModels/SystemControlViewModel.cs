@@ -1,4 +1,5 @@
 using Avalonia.Media;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OmenCore.Avalonia.Services;
@@ -127,6 +128,35 @@ public partial class SystemControlViewModel : ObservableObject
     [ObservableProperty]
     private string _currentKeyboardAnimation = "Static";
 
+    // Backlight idle timeout (BIOS-style). Index maps into KeyboardTimeoutSeconds.
+    [ObservableProperty]
+    private int _selectedKeyboardTimeoutIndex;
+
+    // NVIDIA Dynamic Boost — live GPU power readout
+    [ObservableProperty]
+    private bool _hasGpuPower;
+
+    [ObservableProperty]
+    private bool _gpuSuspended;
+
+    [ObservableProperty]
+    private double _gpuPowerDraw;
+
+    [ObservableProperty]
+    private double _gpuPowerLimit;
+
+    [ObservableProperty]
+    private double _gpuPowerDefaultLimit;
+
+    [ObservableProperty]
+    private double _gpuPowerMaxLimit;
+
+    [ObservableProperty]
+    private bool _dynamicBoostActive;
+
+    [ObservableProperty]
+    private string _dynamicBoostStatus = "Checking…";
+
     // NVIDIA Settings launcher
     [ObservableProperty]
     private bool _hasNvidiaSettings;
@@ -138,6 +168,14 @@ public partial class SystemControlViewModel : ObservableObject
     public string[] PerformanceModes { get; } = { "Default", "Balanced", "Performance", "Cool" };
     public string[] GpuModes { get; } = { "Hybrid", "Discrete", "Integrated" };
     public string[] KeyboardAnimations { get; } = { "Static", "Breathing", "Wave", "Spectrum", "Off" };
+
+    /// <summary>
+    /// BIOS-style backlight idle timeout options. The daemon turns the backlight off after
+    /// this much inactivity and restores it on the next keypress. Index-aligned with
+    /// <see cref="KeyboardTimeoutSeconds"/>.
+    /// </summary>
+    public string[] KeyboardTimeouts { get; } = { "Never", "5 seconds", "15 seconds", "30 seconds", "1 minute", "5 minutes" };
+    private static readonly int[] KeyboardTimeoutSeconds = { 0, 5, 15, 30, 60, 300 };
 
     /// <summary>
     /// Per-zone base colors. Brightness scaling is applied on write so
@@ -153,10 +191,14 @@ public partial class SystemControlViewModel : ObservableObject
         new("Zone 4 — WASD"),
     };
 
+    private readonly DispatcherTimer _gpuPowerTimer;
+
     public SystemControlViewModel(IHardwareService hardwareService, IUserPreferencesService preferences)
     {
         _hardwareService = hardwareService;
         _preferences = preferences;
+        _gpuPowerTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _gpuPowerTimer.Tick += async (_, _) => await RefreshGpuPowerAsync();
         _ = InitializeAsync();
     }
 
@@ -198,11 +240,53 @@ public partial class SystemControlViewModel : ObservableObject
 
             HasNvidiaSettings = capabilities.HasNvidiaSettings;
 
+            await RefreshGpuPowerAsync();
+            if (HasGpuPower)
+                _gpuPowerTimer.Start();
+
             _ = ScheduleRestoreKeyboardPreferencesAsync();
         }
         catch (Exception ex)
         {
             StatusMessage = $"Initialization error: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshGpuPowerAsync()
+    {
+        try
+        {
+            var info = await _hardwareService.GetGpuPowerAsync();
+            if (info == null)
+            {
+                HasGpuPower = false;
+                _gpuPowerTimer.Stop();
+                return;
+            }
+
+            HasGpuPower = true;
+            GpuSuspended = info.Suspended;
+
+            if (info.Suspended)
+            {
+                DynamicBoostActive = false;
+                GpuPowerDraw = 0;
+                DynamicBoostStatus = "dGPU suspended (power saving)";
+                return;
+            }
+
+            GpuPowerDraw = info.DrawWatts;
+            GpuPowerLimit = info.LimitWatts;
+            GpuPowerDefaultLimit = info.DefaultLimitWatts;
+            GpuPowerMaxLimit = info.MaxLimitWatts;
+            DynamicBoostActive = info.DynamicBoostActive;
+            DynamicBoostStatus = info.DynamicBoostActive
+                ? $"Active · +{Math.Max(0, info.LimitWatts - info.DefaultLimitWatts):0} W over base"
+                : "Idle · at base TGP";
+        }
+        catch
+        {
+            // Telemetry only — keep the last-known values on a transient failure.
         }
     }
 
@@ -234,6 +318,7 @@ public partial class SystemControlViewModel : ObservableObject
             ZoneColors[3].SetColor((byte)kb.Zone4R, (byte)kb.Zone4G, (byte)kb.Zone4B);
             KeyboardBrightness = Math.Clamp(kb.Brightness, 0, 100);
             UpdateKeyboardAnimationSelection(kb.AnimationIndex);
+            SelectedKeyboardTimeoutIndex = TimeoutIndexForSeconds(kb.BacklightTimeoutSeconds);
 
             if (HasFourZoneRgb || HasKeyboardBacklight)
                 await ApplyLightingAsync();
@@ -252,6 +337,7 @@ public partial class SystemControlViewModel : ObservableObject
         var kb = _preferences.Current.Keyboard;
         kb.Brightness = KeyboardBrightness;
         kb.AnimationIndex = SelectedKeyboardAnimationIndex;
+        kb.BacklightTimeoutSeconds = SecondsForTimeoutIndex(SelectedKeyboardTimeoutIndex);
         kb.Zone1R = ZoneColors[0].R;
         kb.Zone1G = ZoneColors[0].G;
         kb.Zone1B = ZoneColors[0].B;
@@ -356,6 +442,42 @@ public partial class SystemControlViewModel : ObservableObject
     partial void OnKeyboardBrightnessChanged(int value)
     {
         _ = ApplyLightingAsync();
+    }
+
+    partial void OnSelectedKeyboardTimeoutIndexChanged(int value)
+    {
+        if (_isRestoringPreferences)
+            return;
+
+        // No immediate hardware effect — the daemon enforces the timeout and reads it at
+        // startup, so persist the choice and tell the user to restart the daemon.
+        _ = PersistKeyboardTimeoutAsync();
+    }
+
+    private async Task PersistKeyboardTimeoutAsync()
+    {
+        try
+        {
+            await PersistKeyboardPreferencesAsync();
+            StatusMessage = SecondsForTimeoutIndex(SelectedKeyboardTimeoutIndex) == 0
+                ? "Backlight timeout: Never (restart the daemon to apply)"
+                : $"Backlight timeout: {KeyboardTimeouts[SelectedKeyboardTimeoutIndex]} (restart the daemon to apply)";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to save backlight timeout: {ex.Message}";
+        }
+    }
+
+    private static int TimeoutIndexForSeconds(int seconds)
+    {
+        var index = Array.IndexOf(KeyboardTimeoutSeconds, seconds);
+        return index >= 0 ? index : 0;
+    }
+
+    private static int SecondsForTimeoutIndex(int index)
+    {
+        return index >= 0 && index < KeyboardTimeoutSeconds.Length ? KeyboardTimeoutSeconds[index] : 0;
     }
 
     partial void OnSelectedKeyboardAnimationIndexChanged(int value)

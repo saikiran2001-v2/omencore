@@ -29,6 +29,21 @@ public class HardwareStatus
 }
 
 /// <summary>
+/// Live NVIDIA GPU power telemetry. Mirrors what "Dynamic Boost" shows on Windows:
+/// the current draw plus the dynamic power ceiling, which rises above the base TGP
+/// (DefaultLimitWatts) toward MaxLimitWatts when Dynamic Boost shifts budget from the
+/// CPU to the GPU. <see cref="Suspended"/> means the dGPU is runtime-suspended and the
+/// values were NOT read (so we don't wake it just to poll).
+/// </summary>
+public record GpuPowerInfo(
+    bool Suspended,
+    double DrawWatts,
+    double LimitWatts,
+    double DefaultLimitWatts,
+    double MaxLimitWatts,
+    bool DynamicBoostActive);
+
+/// <summary>
 /// System capability information.
 /// </summary>
 public class SystemCapabilities
@@ -171,6 +186,14 @@ public interface IHardwareService
     /// Throws NotSupportedException if the hardware doesn't expose this via sysfs.
     /// </summary>
     Task SetChargeEndThresholdAsync(int percent);
+
+    /// <summary>
+    /// Gets live NVIDIA GPU power telemetry, or null when there is no NVIDIA dGPU /
+    /// nvidia-smi. When the dGPU is runtime-suspended this returns a value with
+    /// <see cref="GpuPowerInfo.Suspended"/> = true WITHOUT waking it, so polling this
+    /// on a hybrid laptop does not defeat Optimus power saving.
+    /// </summary>
+    Task<GpuPowerInfo?> GetGpuPowerAsync();
 
     /// <summary>
     /// Event raised when hardware status changes.

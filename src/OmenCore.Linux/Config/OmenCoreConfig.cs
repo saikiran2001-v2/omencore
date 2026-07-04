@@ -200,6 +200,11 @@ public class OmenCoreConfig
             color = "FF0000"
             # Brightness 0-100
             brightness = 100
+            # Seconds of inactivity (keyboard/touchpad) before the daemon turns the backlight
+            # off, restoring it on the next keypress. 0 = never turn off. Emulates the HP BIOS
+            # "keyboard backlight timeout" (change it here instead of in the BIOS). Applied by
+            # the daemon at startup — restart the service after changing it.
+            backlight_timeout_seconds = 0
 
             [startup]
             # Apply saved configuration when daemon starts
@@ -443,6 +448,8 @@ public class OmenCoreConfig
                 config.Keyboard.Zone4Color = zone4;
             if (GetInt(keyboard, "animation_mode") is { } animationMode)
                 config.Keyboard.AnimationMode = animationMode;
+            if (GetInt(keyboard, "backlight_timeout_seconds") is { } kbTimeout)
+                config.Keyboard.BacklightTimeoutSeconds = kbTimeout;
         }
 
         if (TryGetTable(root, "startup", out var startup))
@@ -511,6 +518,7 @@ public class OmenCoreConfig
         config.Keyboard.Zone3Color = NormalizeOptionalHexColor(config.Keyboard.Zone3Color);
         config.Keyboard.Zone4Color = NormalizeOptionalHexColor(config.Keyboard.Zone4Color);
         config.Keyboard.AnimationMode = Math.Clamp(config.Keyboard.AnimationMode, 0, 255);
+        config.Keyboard.BacklightTimeoutSeconds = Math.Max(0, config.Keyboard.BacklightTimeoutSeconds);
 
         config.Thermal.ThrottleTempC = Math.Clamp(config.Thermal.ThrottleTempC, 70, 110);
         config.Thermal.RestoreTempC = Math.Clamp(config.Thermal.RestoreTempC, 50, 100);
@@ -776,6 +784,14 @@ public class KeyboardConfig
     public string? Zone3Color { get; set; }
     public string? Zone4Color { get; set; }
     public int AnimationMode { get; set; }
+
+    /// <summary>
+    /// Seconds of input inactivity (keyboard + touchpad) after which the daemon turns the
+    /// backlight off, restoring it on the next keypress/touch. 0 = never (always on).
+    /// Emulates the HP BIOS "keyboard backlight timeout" in software so it can be changed
+    /// without rebooting into the BIOS. Only enforced by the running daemon.
+    /// </summary>
+    public int BacklightTimeoutSeconds { get; set; }
 }
 
 public class StartupConfig
