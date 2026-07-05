@@ -1230,6 +1230,12 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         if (nvidiaSmi == null)
             return 0;
 
+        // Never wake or hold an idle dGPU awake just to poll temperature — that would keep it
+        // powered on a hybrid laptop. EC/hwmon and the daemon snapshot cover the idle case;
+        // nvidia-smi is only used once the GPU is known to be busy (see AllowNvidiaProbe).
+        if (!AllowNvidiaProbe())
+            return 0;
+
         try
         {
             using var proc = new System.Diagnostics.Process
@@ -1279,11 +1285,11 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         if (nvidiaSmi == null)
             return null;
 
-        // Do NOT wake a runtime-suspended dGPU just to read power — that would keep the
-        // GPU powered and defeat Optimus battery saving. Report "suspended" from sysfs
-        // (a free read) and skip nvidia-smi entirely in that case.
-        if (TryGetNvidiaRuntimeStatus(out var runtimeStatus) &&
-            string.Equals(runtimeStatus, "suspended", StringComparison.OrdinalIgnoreCase))
+        // Do NOT wake or hold an idle dGPU awake just to read power — that would keep the GPU
+        // powered and defeat Optimus battery saving. The governor returns false while the GPU
+        // is suspended or in an idle cooldown; in that case report it as suspended (hides the
+        // live power card) and skip nvidia-smi entirely.
+        if (!AllowNvidiaProbe())
         {
             return new GpuPowerInfo(Suspended: true, 0, 0, 0, 0, DynamicBoostActive: false);
         }
@@ -1343,6 +1349,114 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         }
     }
 
+    // --- NVIDIA dGPU probe governor (RTD3 power-saving safe) --------------------------------
+    // nvidia-smi wakes the dGPU. Polling it on a fixed timer resets the RTD3 idle timer every
+    // cycle and would keep the GPU powered forever — including the case where OmenCore starts
+    // while the GPU is still awake (right after boot, or seconds after a game closes, before it
+    // has had a chance to suspend). This governor only allows probes when the GPU is genuinely
+    // busy (a real client holds it), plus a single utilization probe on startup. Whenever the GPU
+    // is idle it stops probing for a cooldown window so the driver can runtime-suspend it, and
+    // once suspended it keeps quiet until a real client wakes the GPU again.
+    private enum NvProbeState { Startup, Cooldown, Busy, Asleep }
+
+    private static readonly object _nvProbeLock = new();
+    private static NvProbeState _nvState = NvProbeState.Startup;
+    private static DateTime _nvCooldownUntilUtc = DateTime.MinValue;
+    private static DateTime _nvLastBusyWorkUtc = DateTime.MinValue;
+
+    // Cooldown must exceed the driver's RTD3 autosuspend delay so an idle GPU actually powers
+    // down during the window instead of being kept awake by our next probe.
+    private static readonly TimeSpan NvIdleCooldown = TimeSpan.FromSeconds(20);
+    // How long the GPU may sit at ~0% (while active) before we back off to re-test for suspend.
+    private static readonly TimeSpan NvBusyIdleGrace = TimeSpan.FromSeconds(10);
+    private const double NvBusyUtilThreshold = 1.0; // percent
+
+    /// <summary>
+    /// Decides whether nvidia-smi may run this cycle without defeating Optimus/RTD3 power
+    /// saving. Returns true only when the dGPU is genuinely busy, or for a single utilization
+    /// probe on startup. While the GPU is idle it returns false for a cooldown window so the
+    /// driver can runtime-suspend it; once suspended it keeps returning false until a real
+    /// client wakes the GPU again.
+    /// </summary>
+    private static bool AllowNvidiaProbe(bool allowStartupProbe = false)
+    {
+        // No NVIDIA dGPU with runtime PM (e.g. desktop / single-GPU) — polling is harmless.
+        if (!TryGetNvidiaRuntimeStatus(out var status))
+            return true;
+
+        var active = string.Equals(status, "active", StringComparison.OrdinalIgnoreCase);
+        var now = DateTime.UtcNow;
+
+        lock (_nvProbeLock)
+        {
+            if (!active)
+            {
+                // Suspended (or transitioning): never probe. The next active edge that we see
+                // must therefore be caused by a real client, since we didn't wake it.
+                _nvState = NvProbeState.Asleep;
+                return false;
+            }
+
+            switch (_nvState)
+            {
+                case NvProbeState.Asleep:
+                    // Active again after we stayed quiet — a real GPU client woke it. Fast-poll.
+                    _nvState = NvProbeState.Busy;
+                    _nvLastBusyWorkUtc = now;
+                    return true;
+
+                case NvProbeState.Startup:
+                    // GPU already awake when OmenCore launched; we can't yet tell whether a real
+                    // client holds it. Only the utilization path may spend this ambiguous probe,
+                    // because its result feeds RecordNvidiaUtilization. Auxiliary probes would
+                    // otherwise consume the startup probe and leave the governor blind.
+                    if (!allowStartupProbe)
+                        return false;
+                    _nvState = NvProbeState.Cooldown;
+                    _nvCooldownUntilUtc = now + NvIdleCooldown;
+                    return true;
+
+                case NvProbeState.Cooldown:
+                    // Hold off so an idle GPU can auto-suspend. If it's still active after the
+                    // whole window (and we never touched it), a real client must be holding it —
+                    // promote to Busy and resume fast polling.
+                    if (now < _nvCooldownUntilUtc)
+                        return false;
+                    _nvState = NvProbeState.Busy;
+                    _nvLastBusyWorkUtc = now;
+                    return true;
+
+                case NvProbeState.Busy:
+                default:
+                    // A real client is (was) holding the GPU, so probing is harmless — it stays
+                    // active regardless of us. But if it goes idle for a while (e.g. the game
+                    // exited), back off to re-test, otherwise our own polling would keep it awake.
+                    if (now - _nvLastBusyWorkUtc >= NvBusyIdleGrace)
+                    {
+                        _nvState = NvProbeState.Cooldown;
+                        _nvCooldownUntilUtc = now + NvIdleCooldown;
+                        return false;
+                    }
+                    return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Feeds observed GPU utilization back into the probe governor so it can tell a genuinely
+    /// busy GPU (keep fast-polling) from one that only looks awake because we just probed it
+    /// (back off so it can suspend). Call this only after a successful nvidia-smi utilization read.
+    /// </summary>
+    private static void RecordNvidiaUtilization(double utilPercent)
+    {
+        if (utilPercent < NvBusyUtilThreshold)
+            return;
+        lock (_nvProbeLock)
+        {
+            _nvLastBusyWorkUtc = DateTime.UtcNow;
+        }
+    }
+
     /// <summary>
     /// Reads the NVIDIA dGPU's PCI runtime power state from sysfs ("active"/"suspended"/…)
     /// without touching the driver. Returns false when no NVIDIA card is present.
@@ -1389,9 +1503,11 @@ public class LinuxHardwareService : IHardwareService, IDisposable
 
     private static async Task<double> ReadGpuUsageAsync()
     {
-        // NVIDIA: query via nvidia-smi
+        // NVIDIA: query via nvidia-smi — but only when the governor says the dGPU is genuinely
+        // busy. This path is allowed to spend the startup probe because the utilization result
+        // feeds the governor; auxiliary power/temp reads must not consume it first.
         var nvidiaSmi = ResolveNvidiaSmiPath();
-        if (nvidiaSmi != null)
+        if (nvidiaSmi != null && AllowNvidiaProbe(allowStartupProbe: true))
         {
             try
             {
@@ -1414,6 +1530,7 @@ public class LinuxHardwareService : IHardwareService, IDisposable
                     double.TryParse(stdout.Trim(), System.Globalization.NumberStyles.Any,
                         System.Globalization.CultureInfo.InvariantCulture, out var pct))
                 {
+                    RecordNvidiaUtilization(pct);
                     return pct;
                 }
             }
