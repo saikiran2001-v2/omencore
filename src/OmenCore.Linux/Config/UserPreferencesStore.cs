@@ -93,11 +93,71 @@ public static class UserPreferencesStore
         }
     }
 
-    public static void ApplyToOmenCoreConfig(OmenCoreConfig config, UserHardwarePreferences preferences)
+    /// <summary>
+    /// Reads the live keyboard state from sysfs and writes it to
+    /// /var/lib/omencore so the next boot restores what was active at shutdown.
+    /// </summary>
+    public static bool PersistKeyboardState(LinuxKeyboardController keyboard)
     {
-        var kb = preferences.Keyboard;
-        var fan = preferences.Fan;
+        if (!keyboard.IsAvailable)
+            return false;
 
+        var preferences = LoadBestAvailable();
+        if (!TryCaptureKeyboardPreferences(keyboard, preferences.Keyboard))
+            return false;
+
+        var config = OmenCoreConfig.Load();
+        ApplyKeyboardToConfig(config, preferences.Keyboard);
+        config.Startup.ApplyOnBoot = true;
+
+        OmenCorePaths.EnsureSharedConfigDirectory();
+        try
+        {
+            config.Save(OmenCoreConfig.SharedConfigPath);
+            WriteJson(SharedPreferencesPath, preferences);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static bool TryCaptureKeyboardPreferences(
+        LinuxKeyboardController keyboard,
+        KeyboardLightingPreferences kb)
+    {
+        if (!keyboard.TryGetAllZoneColors(out var colors))
+            return false;
+
+        kb.Zone1R = colors[0].R;
+        kb.Zone1G = colors[0].G;
+        kb.Zone1B = colors[0].B;
+        kb.Zone2R = colors[1].R;
+        kb.Zone2G = colors[1].G;
+        kb.Zone2B = colors[1].B;
+        kb.Zone3R = colors[2].R;
+        kb.Zone3G = colors[2].G;
+        kb.Zone3B = colors[2].B;
+        kb.Zone4R = colors[3].R;
+        kb.Zone4G = colors[3].G;
+        kb.Zone4B = colors[3].B;
+
+        if (keyboard.SupportsBrightnessControl)
+            kb.Brightness = Math.Clamp(keyboard.GetBrightness(), 0, 100);
+
+        if (keyboard.HasFourZoneAnimationControl)
+        {
+            var animation = keyboard.GetAnimationMode();
+            if (animation >= 0)
+                kb.AnimationIndex = animation;
+        }
+
+        return true;
+    }
+
+    public static void ApplyKeyboardToConfig(OmenCoreConfig config, KeyboardLightingPreferences kb)
+    {
         config.Keyboard.Enabled = true;
         config.Keyboard.Brightness = Math.Clamp(kb.Brightness, 0, 100);
         config.Keyboard.Color = $"{kb.Zone1R:X2}{kb.Zone1G:X2}{kb.Zone1B:X2}";
@@ -107,6 +167,14 @@ public static class UserPreferencesStore
         config.Keyboard.Zone4Color = $"{kb.Zone4R:X2}{kb.Zone4G:X2}{kb.Zone4B:X2}";
         config.Keyboard.AnimationMode = kb.AnimationIndex;
         config.Keyboard.BacklightTimeoutSeconds = Math.Max(0, kb.BacklightTimeoutSeconds);
+    }
+
+    public static void ApplyToOmenCoreConfig(OmenCoreConfig config, UserHardwarePreferences preferences)
+    {
+        var kb = preferences.Keyboard;
+        var fan = preferences.Fan;
+
+        ApplyKeyboardToConfig(config, kb);
 
         if (string.Equals(fan.ActiveFanProfile, "manual", StringComparison.OrdinalIgnoreCase)
             && fan.IsCustomCurveEnabled

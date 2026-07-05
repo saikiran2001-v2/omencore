@@ -1,4 +1,5 @@
 using System.CommandLine;
+using OmenCore.Linux.Config;
 using OmenCore.Linux.Hardware;
 
 namespace OmenCore.Linux.Commands;
@@ -84,6 +85,7 @@ public static class KeyboardCommand
 
             if (keyboard.SetAnimationMode(mode))
             {
+                PersistKeyboardState(keyboard);
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"✓ Keyboard animation mode set to {mode}");
                 Console.ResetColor();
@@ -102,6 +104,7 @@ public static class KeyboardCommand
         {
             if (keyboard.TurnOff())
             {
+                PersistKeyboardState(keyboard);
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("✓ Keyboard lighting turned off");
                 Console.ResetColor();
@@ -176,6 +179,10 @@ public static class KeyboardCommand
                 Console.WriteLine("✗ Failed to set keyboard color");
                 Console.ResetColor();
             }
+            else
+            {
+                PersistKeyboardState(keyboard);
+            }
             return;
         }
         
@@ -193,6 +200,7 @@ public static class KeyboardCommand
 
             if (keyboard.SetBrightness(level))
             {
+                PersistKeyboardState(keyboard);
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"✓ Keyboard brightness set to: {level}%");
                 Console.ResetColor();
@@ -238,6 +246,16 @@ public static class KeyboardCommand
         }
         Console.WriteLine("╚══════════════════════════════════════════════╝");
         Console.WriteLine();
+    }
+
+    private static void PersistKeyboardState(LinuxKeyboardController keyboard)
+    {
+        if (!UserPreferencesStore.PersistKeyboardState(keyboard))
+            return;
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("  (saved for next boot)");
+        Console.ResetColor();
     }
 
     private static bool TryParseAnimationMode(string input, out byte mode)

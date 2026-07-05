@@ -606,6 +606,8 @@ public class OmenCoreDaemon : IDisposable
     {
         Log("Applying startup configuration...");
         
+        MergeSharedKeyboardPreferences();
+        
         // Apply fan profile
         if (_config.Fan.Profile != "custom")
         {
@@ -740,6 +742,15 @@ public class OmenCoreDaemon : IDisposable
         // Stop fan curve engine
         _fanCurveEngine?.Stop();
         
+        // Remember keyboard lighting for the next boot (captures live sysfs state).
+        if (_config.Keyboard.Enabled)
+        {
+            if (UserPreferencesStore.PersistKeyboardState(_keyboard))
+                Log("Keyboard lighting saved for next boot");
+            else
+                Log("Warning: Could not save keyboard lighting for next boot");
+        }
+
         // Restore settings if configured
         if (_config.Startup.RestoreOnExit)
         {
@@ -835,6 +846,21 @@ public class OmenCoreDaemon : IDisposable
         // Additional logging or actions on fan speed change
     }
     
+    private void MergeSharedKeyboardPreferences()
+    {
+        var sharedPrefs = UserPreferencesStore.TryLoad(UserPreferencesStore.SharedPreferencesPath);
+        if (sharedPrefs == null)
+            return;
+
+        var sharedConfigPath = OmenCoreConfig.SharedConfigPath;
+        var prefsPath = UserPreferencesStore.SharedPreferencesPath;
+        if (!File.Exists(sharedConfigPath)
+            || File.GetLastWriteTimeUtc(prefsPath) >= File.GetLastWriteTimeUtc(sharedConfigPath))
+        {
+            UserPreferencesStore.ApplyKeyboardToConfig(_config, sharedPrefs.Keyboard);
+        }
+    }
+
     private static bool TryParseColor(string hex, out byte r, out byte g, out byte b)
     {
         r = g = b = 0;

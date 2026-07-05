@@ -32,6 +32,11 @@ public partial class ZoneColorViewModel : ObservableObject
     public string Name { get; }
 
     /// <summary>
+    /// Raised when the user changes a zone color (not during programmatic restore).
+    /// </summary>
+    public Action? ColorChanged;
+
+    /// <summary>
     /// Avalonia.Media.Color bridging R/G/B — binds directly to ColorPicker.
     /// </summary>
     public Color Color
@@ -47,6 +52,7 @@ public partial class ZoneColorViewModel : ObservableObject
             _suppressColorSync = false;
             OnPropertyChanged();
             OnPropertyChanged(nameof(PreviewBrush));
+            ColorChanged?.Invoke();
         }
     }
 
@@ -58,6 +64,16 @@ public partial class ZoneColorViewModel : ObservableObject
         _r = r;
         _g = g;
         _b = b;
+    }
+
+    partial void OnRChanged(int value) => NotifyColorChanged();
+    partial void OnGChanged(int value) => NotifyColorChanged();
+    partial void OnBChanged(int value) => NotifyColorChanged();
+
+    private void NotifyColorChanged()
+    {
+        if (!_suppressColorSync)
+            ColorChanged?.Invoke();
     }
 
     public void SetColor(byte r, byte g, byte b)
@@ -197,6 +213,8 @@ public partial class SystemControlViewModel : ObservableObject
     {
         _hardwareService = hardwareService;
         _preferences = preferences;
+        foreach (var zone in ZoneColors)
+            zone.ColorChanged = () => OnZoneColorChanged();
         _gpuPowerTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _gpuPowerTimer.Tick += async (_, _) => await RefreshGpuPowerAsync();
         _ = InitializeAsync();
@@ -288,6 +306,14 @@ public partial class SystemControlViewModel : ObservableObject
         {
             // Telemetry only — keep the last-known values on a transient failure.
         }
+    }
+
+    private void OnZoneColorChanged()
+    {
+        if (_isRestoringPreferences)
+            return;
+
+        _ = ApplyLightingAsync();
     }
 
     private Task ScheduleRestoreKeyboardPreferencesAsync()
@@ -526,8 +552,6 @@ public partial class SystemControlViewModel : ObservableObject
             {
                 StatusMessage = "Partially applied lighting; saved remaining settings for the daemon.";
             }
-
-            UpdateKeyboardAnimationSelection(0);
         }
         else if (_canSetKeyboardBrightness)
         {
