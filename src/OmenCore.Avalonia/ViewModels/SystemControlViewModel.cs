@@ -313,7 +313,7 @@ public partial class SystemControlViewModel : ObservableObject
         if (_isRestoringPreferences)
             return;
 
-        _ = ApplyLightingAsync();
+        _ = ApplyLightingAsync(resetAnimationToStatic: true);
     }
 
     private Task ScheduleRestoreKeyboardPreferencesAsync()
@@ -348,6 +348,9 @@ public partial class SystemControlViewModel : ObservableObject
 
             if (HasFourZoneRgb || HasKeyboardBacklight)
                 await ApplyLightingAsync();
+
+            if (kb.AnimationIndex > 0 && CanSetKeyboardAnimation)
+                await ApplyKeyboardAnimationAsync(AnimationUiIndexForMode(kb.AnimationIndex));
         }
         finally
         {
@@ -519,8 +522,22 @@ public partial class SystemControlViewModel : ObservableObject
     /// This fixes the previous bug where SetAllZonesColor (full brightness) and
     /// SetBrightness (read-and-scale in sysfs) composed incorrectly.
     /// </summary>
-    private async Task ApplyLightingAsync()
+    private async Task ApplyLightingAsync(bool resetAnimationToStatic = false)
     {
+        if (resetAnimationToStatic && CanSetKeyboardAnimation && SelectedKeyboardAnimationIndex != 0)
+        {
+            try
+            {
+                await _hardwareService.SetKeyboardAnimationModeAsync(0);
+            }
+            catch
+            {
+                // Best effort — sysfs colors are still applied below.
+            }
+
+            UpdateKeyboardAnimationSelection(0);
+        }
+
         double factor = Math.Clamp(KeyboardBrightness, 0, 100) / 100.0;
         var directApplySucceeded = false;
 
@@ -617,7 +634,7 @@ public partial class SystemControlViewModel : ObservableObject
         foreach (var zone in ZoneColors)
             zone.SetColor(r, g, b);
 
-        _ = ApplyLightingAsync();
+        _ = ApplyLightingAsync(resetAnimationToStatic: true);
     }
 
     private async Task ApplyKeyboardAnimationAsync(int index)
@@ -647,6 +664,15 @@ public partial class SystemControlViewModel : ObservableObject
             StatusMessage = $"Animation error: {ex.Message}";
         }
     }
+
+    private static int AnimationUiIndexForMode(int mode) => mode switch
+    {
+        1 => 1,
+        2 => 2,
+        3 => 3,
+        255 => 4,
+        _ => 0,
+    };
 
     private void UpdateKeyboardAnimationSelection(int mode)
     {

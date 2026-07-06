@@ -80,6 +80,7 @@ public static class UserPreferencesStore
     {
         var config = OmenCoreConfig.Load();
         ApplyToOmenCoreConfig(config, preferences);
+        ApplyKeyboardToDaemonBootConfig(config, preferences.Keyboard);
         config.Startup.ApplyOnBoot = true;
 
         OmenCorePaths.EnsureSharedConfigDirectory();
@@ -94,27 +95,44 @@ public static class UserPreferencesStore
     }
 
     /// <summary>
-    /// Reads the live keyboard state from sysfs and writes it to
-    /// /var/lib/omencore so the next boot restores what was active at shutdown.
+    /// Syncs keyboard brightness and daemon boot config from saved preferences.
+    /// Zone colors are owned by the GUI/CLI — do not snapshot sysfs on daemon shutdown
+    /// or a boot-time red apply will be written back over the user's saved palette.
     /// </summary>
-    public static bool PersistKeyboardState(LinuxKeyboardController keyboard)
+    public static bool PersistKeyboardState(
+        LinuxKeyboardController keyboard,
+        bool captureZoneColors = true,
+        int? animationIndex = null)
     {
         if (!keyboard.IsAvailable)
             return false;
 
         var preferences = LoadBestAvailable();
-        if (!TryCaptureKeyboardPreferences(keyboard, preferences.Keyboard))
-            return false;
+        if (captureZoneColors)
+        {
+            if (!TryCaptureKeyboardPreferences(keyboard, preferences.Keyboard))
+                return false;
+
+            preferences.Keyboard.AnimationIndex = animationIndex ?? 0;
+        }
+        else
+        {
+            if (animationIndex.HasValue)
+                preferences.Keyboard.AnimationIndex = animationIndex.Value;
+
+            if (keyboard.SupportsBrightnessControl)
+                preferences.Keyboard.Brightness = Math.Clamp(keyboard.GetBrightness(), 0, 100);
+        }
 
         var config = OmenCoreConfig.Load();
-        ApplyKeyboardToConfig(config, preferences.Keyboard);
+        ApplyKeyboardToDaemonBootConfig(config, preferences.Keyboard);
         config.Startup.ApplyOnBoot = true;
 
         OmenCorePaths.EnsureSharedConfigDirectory();
         try
         {
             config.Save(OmenCoreConfig.SharedConfigPath);
-            WriteJson(SharedPreferencesPath, preferences);
+            SaveToAllLocations(preferences);
             return true;
         }
         catch
@@ -167,6 +185,16 @@ public static class UserPreferencesStore
         config.Keyboard.Zone4Color = $"{kb.Zone4R:X2}{kb.Zone4G:X2}{kb.Zone4B:X2}";
         config.Keyboard.AnimationMode = kb.AnimationIndex;
         config.Keyboard.BacklightTimeoutSeconds = Math.Max(0, kb.BacklightTimeoutSeconds);
+    }
+
+    /// <summary>
+    /// Static zone colors for daemon boot apply. Animations are software-rendered by the GUI;
+    /// the firmware fourzone_animation node must stay off so it does not fight saved colors.
+    /// </summary>
+    public static void ApplyKeyboardToDaemonBootConfig(OmenCoreConfig config, KeyboardLightingPreferences kb)
+    {
+        ApplyKeyboardToConfig(config, kb);
+        config.Keyboard.AnimationMode = 0;
     }
 
     public static void ApplyToOmenCoreConfig(OmenCoreConfig config, UserHardwarePreferences preferences)

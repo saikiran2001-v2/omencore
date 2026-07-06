@@ -85,7 +85,7 @@ public static class KeyboardCommand
 
             if (keyboard.SetAnimationMode(mode))
             {
-                PersistKeyboardState(keyboard);
+                PersistKeyboardState(keyboard, captureZoneColors: false, animationIndex: mode);
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"✓ Keyboard animation mode set to {mode}");
                 Console.ResetColor();
@@ -248,9 +248,12 @@ public static class KeyboardCommand
         Console.WriteLine();
     }
 
-    private static void PersistKeyboardState(LinuxKeyboardController keyboard)
+    private static void PersistKeyboardState(
+        LinuxKeyboardController keyboard,
+        bool captureZoneColors = true,
+        int? animationIndex = null)
     {
-        if (!UserPreferencesStore.PersistKeyboardState(keyboard))
+        if (!UserPreferencesStore.PersistKeyboardState(keyboard, captureZoneColors, animationIndex))
             return;
 
         Console.ForegroundColor = ConsoleColor.DarkGray;

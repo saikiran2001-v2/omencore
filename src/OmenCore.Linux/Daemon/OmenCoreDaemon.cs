@@ -692,10 +692,11 @@ public class OmenCoreDaemon : IDisposable
             _keyboard.SetBrightness(_config.Keyboard.Brightness);
             Log($"  Keyboard brightness: {_config.Keyboard.Brightness}%");
 
-            if (_config.Keyboard.AnimationMode > 0)
+            // Four-zone animations are software-rendered by the GUI (KeyboardAnimationEngine).
+            // Never push animation_mode to firmware on boot — it overrides saved static colors.
+            if (_keyboard.HasFourZoneAnimationControl)
             {
-                _keyboard.SetAnimationMode((byte)_config.Keyboard.AnimationMode);
-                Log($"  Keyboard animation: {_config.Keyboard.AnimationMode}");
+                _keyboard.SetAnimationMode(0);
             }
         }
         
@@ -742,13 +743,13 @@ public class OmenCoreDaemon : IDisposable
         // Stop fan curve engine
         _fanCurveEngine?.Stop();
         
-        // Remember keyboard lighting for the next boot (captures live sysfs state).
+        // Remember keyboard lighting for the next boot (brightness only — GUI owns colors).
         if (_config.Keyboard.Enabled)
         {
-            if (UserPreferencesStore.PersistKeyboardState(_keyboard))
-                Log("Keyboard lighting saved for next boot");
+            if (UserPreferencesStore.PersistKeyboardState(_keyboard, captureZoneColors: false))
+                Log("Keyboard brightness saved for next boot");
             else
-                Log("Warning: Could not save keyboard lighting for next boot");
+                Log("Warning: Could not save keyboard settings for next boot");
         }
 
         // Restore settings if configured
@@ -848,17 +849,21 @@ public class OmenCoreDaemon : IDisposable
     
     private void MergeSharedKeyboardPreferences()
     {
-        var sharedPrefs = UserPreferencesStore.TryLoad(UserPreferencesStore.SharedPreferencesPath);
-        if (sharedPrefs == null)
-            return;
-
-        var sharedConfigPath = OmenCoreConfig.SharedConfigPath;
         var prefsPath = UserPreferencesStore.SharedPreferencesPath;
-        if (!File.Exists(sharedConfigPath)
-            || File.GetLastWriteTimeUtc(prefsPath) >= File.GetLastWriteTimeUtc(sharedConfigPath))
+        var sharedPrefs = UserPreferencesStore.TryLoad(prefsPath);
+        if (sharedPrefs == null)
         {
-            UserPreferencesStore.ApplyKeyboardToConfig(_config, sharedPrefs.Keyboard);
+            Log($"Keyboard prefs: no file at {prefsPath}; using config.toml colors");
+            return;
         }
+
+        var kb = sharedPrefs.Keyboard;
+        Log($"Keyboard prefs: {prefsPath} -> " +
+            $"Z1 #{kb.Zone1R:X2}{kb.Zone1G:X2}{kb.Zone1B:X2}, animation={kb.AnimationIndex}");
+
+        // user-preferences.json is the authoritative keyboard source for the GUI;
+        // always merge it so daemon boot colors match what the user last saved.
+        UserPreferencesStore.ApplyKeyboardToDaemonBootConfig(_config, kb);
     }
 
     private static bool TryParseColor(string hex, out byte r, out byte g, out byte b)
