@@ -92,6 +92,23 @@ public class FanCurveEngine : IDisposable
     /// <summary>
     /// Stop the fan curve engine.
     /// </summary>
+    /// <summary>
+    /// Reset ramp/hysteresis state after the daemon reloads curve points from disk.
+    /// Without this, smooth-transition state from the previous curve can override a
+    /// gentler curve applied by the GUI until the daemon is restarted.
+    /// </summary>
+    public void ReloadFromConfig()
+    {
+        _lastTargetSpeed = -1;
+        _committedCurveTarget = -1;
+        _lastCommittedMaxTemp = 0;
+        _pendingCurveTarget = -1;
+        _pendingTargetSinceUtc = DateTime.MinValue;
+        _curveCacheKey = null;
+        _sortedCurvePoints = null;
+        Log("Curve state reset after config reload");
+    }
+
     public void Stop()
     {
         if (!_isRunning) return;

@@ -32,7 +32,11 @@ public class OmenCoreDaemon : IDisposable
     private bool _isRunning;
     private bool _lowOverheadMode;
     private FileSystemWatcher? _configWatcher;
+    private readonly object _reloadLock = new();
+    private bool _reloadPending;
+    private DateTime _reloadScheduledUtc = DateTime.MinValue;
     private KeyboardIdleMonitor? _keyboardIdleMonitor;
+    private KeyboardAnimationEngine? _keyboardAnimationEngine;
     
     // Thermal watchdog: tracks whether the CPU has been at throttle temp so we can
     // re-apply the configured performance mode once it cools down (some OMEN models
@@ -605,9 +609,7 @@ public class OmenCoreDaemon : IDisposable
     private async Task ApplyStartupConfigAsync()
     {
         Log("Applying startup configuration...");
-        
-        MergeSharedKeyboardPreferences();
-        
+
         // Apply fan profile
         if (_config.Fan.Profile != "custom")
         {
@@ -656,47 +658,29 @@ public class OmenCoreDaemon : IDisposable
                 Log($"  Thermal power limit failed: {powerLimit}");
         }
         
-        // Apply keyboard settings
+        // Apply keyboard settings (static palette + software animation when configured).
         if (_config.Keyboard.Enabled)
         {
-            var appliedZoneColors = false;
-            var zoneColors = new[]
+            var prefs = UserPreferencesStore.LoadCanonical().Keyboard;
+            if (UserPreferencesStore.ApplyKeyboard(_keyboard, prefs))
             {
-                _config.Keyboard.Zone1Color,
-                _config.Keyboard.Zone2Color,
-                _config.Keyboard.Zone3Color,
-                _config.Keyboard.Zone4Color
-            };
-
-            for (var zone = 0; zone < zoneColors.Length; zone++)
-            {
-                var zoneColor = zoneColors[zone];
-                if (string.IsNullOrWhiteSpace(zoneColor))
-                    continue;
-
-                if (TryParseColor(zoneColor, out var zoneR, out var zoneG, out var zoneB)
-                    && _keyboard.SetZoneColor(zone, zoneR, zoneG, zoneB))
-                {
-                    appliedZoneColors = true;
-                    Log($"  Keyboard zone {zone + 1} color: #{zoneColor.Trim().TrimStart('#').ToUpperInvariant()}");
-                }
+                Log($"  Keyboard lighting: Z1 #{prefs.Zone1R:X2}{prefs.Zone1G:X2}{prefs.Zone1B:X2}, " +
+                    $"brightness {prefs.Brightness}%, animation={prefs.AnimationIndex}");
             }
 
-            if (!appliedZoneColors
-                && TryParseColor(_config.Keyboard.Color, out var r, out var g, out var b))
-            {
-                _keyboard.SetAllZonesColor(r, g, b);
-                Log($"  Keyboard color: #{_config.Keyboard.Color}");
-            }
-
-            _keyboard.SetBrightness(_config.Keyboard.Brightness);
-            Log($"  Keyboard brightness: {_config.Keyboard.Brightness}%");
-
-            // Four-zone animations are software-rendered by the GUI (KeyboardAnimationEngine).
-            // Never push animation_mode to firmware on boot — it overrides saved static colors.
             if (_keyboard.HasFourZoneAnimationControl)
-            {
                 _keyboard.SetAnimationMode(0);
+
+            if (prefs.AnimationIndex > 0)
+            {
+                _keyboardAnimationEngine = new KeyboardAnimationEngine(_keyboard);
+                if (UserPreferencesStore.TryStartKeyboardAnimation(_keyboardAnimationEngine, prefs.AnimationIndex))
+                    Log($"  Keyboard software animation started (mode {prefs.AnimationIndex})");
+                else
+                {
+                    _keyboardAnimationEngine.Dispose();
+                    _keyboardAnimationEngine = null;
+                }
             }
         }
         
@@ -739,6 +723,9 @@ public class OmenCoreDaemon : IDisposable
         // Stop keyboard idle monitor (restores backlight if it was dimmed)
         _keyboardIdleMonitor?.Dispose();
         _keyboardIdleMonitor = null;
+
+        _keyboardAnimationEngine?.Dispose();
+        _keyboardAnimationEngine = null;
         
         // Stop fan curve engine
         _fanCurveEngine?.Stop();
@@ -807,31 +794,77 @@ public class OmenCoreDaemon : IDisposable
             Stop();
         };
         
-        // Handle SIGHUP for config reload (Linux only)
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             AppDomain.CurrentDomain.ProcessExit += (_, _) => Stop();
+
+            PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx =>
+            {
+                ctx.Cancel = true;
+                ScheduleConfigurationReload();
+            });
+        }
+    }
+
+    private void ScheduleConfigurationReload()
+    {
+        lock (_reloadLock)
+        {
+            _reloadPending = true;
+            _reloadScheduledUtc = DateTime.UtcNow;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(300);
+            lock (_reloadLock)
+            {
+                if (!_reloadPending || (DateTime.UtcNow - _reloadScheduledUtc).TotalMilliseconds < 250)
+                    return;
+
+                _reloadPending = false;
+            }
+
+            ReloadConfiguration();
+        });
+    }
+
+    private void ReloadConfiguration()
+    {
+        try
+        {
+            UserPreferencesStore.MergeIntoConfig(_config);
+            _fanCurveEngine?.ReloadFromConfig();
+
+            var curvePreview = _config.Fan.Curve.Points.Count == 0
+                ? "(none)"
+                : string.Join(", ", _config.Fan.Curve.Points.Select(p => $"{p.Temp}°C→{p.Speed}%"));
+
+            Log($"Configuration reloaded — profile={_config.Fan.Profile}, curve: {curvePreview}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to reload configuration: {ex.Message}");
         }
     }
     
     private void SetupConfigWatcher()
     {
-        var configDir = Path.GetDirectoryName(OmenCoreConfig.DefaultConfigPath);
-        if (string.IsNullOrEmpty(configDir) || !Directory.Exists(configDir))
-        {
+        if (!Directory.Exists(OmenCorePaths.SharedConfigDir))
             return;
-        }
 
         try
         {
-            _configWatcher = new FileSystemWatcher(configDir, "config.toml")
+            _configWatcher = new FileSystemWatcher(OmenCorePaths.SharedConfigDir)
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.CreationTime
             };
 
-            _configWatcher.Changed += (_, _) =>
+            _configWatcher.Changed += (_, e) =>
             {
-                Log("Configuration file changed - restart daemon to apply");
+                var name = Path.GetFileName(e.Name);
+                if (name is "config.toml" or "user-preferences.json")
+                    ScheduleConfigurationReload();
             };
 
             _configWatcher.EnableRaisingEvents = true;
@@ -845,25 +878,6 @@ public class OmenCoreDaemon : IDisposable
     private void OnFanSpeedChange(int temp, int targetSpeed, int actualSpeed)
     {
         // Additional logging or actions on fan speed change
-    }
-    
-    private void MergeSharedKeyboardPreferences()
-    {
-        var prefsPath = UserPreferencesStore.SharedPreferencesPath;
-        var sharedPrefs = UserPreferencesStore.TryLoad(prefsPath);
-        if (sharedPrefs == null)
-        {
-            Log($"Keyboard prefs: no file at {prefsPath}; using config.toml colors");
-            return;
-        }
-
-        var kb = sharedPrefs.Keyboard;
-        Log($"Keyboard prefs: {prefsPath} -> " +
-            $"Z1 #{kb.Zone1R:X2}{kb.Zone1G:X2}{kb.Zone1B:X2}, animation={kb.AnimationIndex}");
-
-        // user-preferences.json is the authoritative keyboard source for the GUI;
-        // always merge it so daemon boot colors match what the user last saved.
-        UserPreferencesStore.ApplyKeyboardToDaemonBootConfig(_config, kb);
     }
 
     private static bool TryParseColor(string hex, out byte r, out byte g, out byte b)
@@ -927,6 +941,7 @@ public class OmenCoreDaemon : IDisposable
     {
         Stop();
         _keyboardIdleMonitor?.Dispose();
+        _keyboardAnimationEngine?.Dispose();
         _fanCurveEngine?.Dispose();
         _configWatcher?.Dispose();
         _cts.Dispose();

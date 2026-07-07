@@ -176,6 +176,7 @@ public static class DaemonCommand
         }
 
         var config = OmenCoreConfig.Load(configPath);
+        UserPreferencesStore.MergeIntoConfig(config);
 
         using var daemon = new OmenCoreDaemon(config);
         await daemon.RunAsync();

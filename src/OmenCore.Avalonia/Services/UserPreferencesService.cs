@@ -150,7 +150,7 @@ public sealed class UserPreferencesService : IUserPreferencesService
 
     public async Task SaveAndSyncDaemonConfigAsync()
     {
-        await SaveAsync();
-        UserPreferencesStore.SyncDaemonConfig(Current);
+        UserPreferencesStore.SyncAll(Current);
+        await Task.CompletedTask;
     }
 }

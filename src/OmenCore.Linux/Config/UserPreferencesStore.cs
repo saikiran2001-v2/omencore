@@ -12,22 +12,45 @@ public static class UserPreferencesStore
     public static string SharedPreferencesPath =>
         Path.Combine(OmenCorePaths.SharedConfigDir, "user-preferences.json");
 
-    public static UserHardwarePreferences LoadBestAvailable()
+    public static UserHardwarePreferences LoadBestAvailable() => LoadCanonical();
+
+    /// <summary>
+    /// Single source of truth: shared runtime prefs written by the GUI/CLI.
+    /// Falls back to the user home copy, then defaults.
+    /// </summary>
+    public static UserHardwarePreferences LoadCanonical()
     {
-        var homePath = OmenCorePaths.GetUserPreferencesPath();
-        var sharedPath = SharedPreferencesPath;
+        var shared = TryLoad(SharedPreferencesPath);
+        if (shared != null)
+            return shared;
 
-        var home = TryLoad(homePath);
-        var shared = TryLoad(sharedPath);
+        var home = TryLoad(OmenCorePaths.GetUserPreferencesPath());
+        return home ?? new UserHardwarePreferences();
+    }
 
-        if (home != null && shared != null)
-        {
-            var homeTime = File.GetLastWriteTimeUtc(homePath);
-            var sharedTime = File.GetLastWriteTimeUtc(sharedPath);
-            return homeTime >= sharedTime ? home : shared;
-        }
+    /// <summary>
+    /// Overlay canonical GUI prefs onto a daemon config before startup.
+    /// Returns the loaded prefs, or null when no preference file exists.
+    /// </summary>
+    public static UserHardwarePreferences? MergeIntoConfig(OmenCoreConfig config)
+    {
+        var prefs = TryLoad(SharedPreferencesPath);
+        if (prefs == null)
+            prefs = TryLoad(OmenCorePaths.GetUserPreferencesPath());
+        if (prefs == null)
+            return null;
 
-        return home ?? shared ?? new UserHardwarePreferences();
+        ApplyToOmenCoreConfig(config, prefs);
+        return prefs;
+    }
+
+    /// <summary>
+    /// Persist prefs to both storage locations and refresh daemon config.toml.
+    /// </summary>
+    public static void SyncAll(UserHardwarePreferences preferences)
+    {
+        SaveToAllLocations(preferences);
+        SyncDaemonConfig(preferences);
     }
 
     public static UserHardwarePreferences? TryLoad(string path)
@@ -164,14 +187,25 @@ public static class UserPreferencesStore
         if (keyboard.SupportsBrightnessControl)
             kb.Brightness = Math.Clamp(keyboard.GetBrightness(), 0, 100);
 
-        if (keyboard.HasFourZoneAnimationControl)
-        {
-            var animation = keyboard.GetAnimationMode();
-            if (animation >= 0)
-                kb.AnimationIndex = animation;
-        }
-
         return true;
+    }
+
+    public static bool TryStartKeyboardAnimation(
+        KeyboardAnimationEngine animationEngine,
+        int animationIndex)
+    {
+        if (animationIndex <= 0)
+            return false;
+
+        var effect = animationIndex switch
+        {
+            1 => KeyboardAnimationEffect.Breathing,
+            2 => KeyboardAnimationEffect.Wave,
+            3 => KeyboardAnimationEffect.Spectrum,
+            _ => (KeyboardAnimationEffect?)null,
+        };
+
+        return effect.HasValue && animationEngine.Start(effect.Value);
     }
 
     public static void ApplyKeyboardToConfig(OmenCoreConfig config, KeyboardLightingPreferences kb)
@@ -272,9 +306,6 @@ public static class UserPreferencesStore
 
         if (keyboard.SupportsBrightnessControl)
             keyboard.SetBrightness(kb.Brightness);
-
-        if (kb.AnimationIndex > 0 && keyboard.HasFourZoneAnimationControl)
-            keyboard.SetAnimationMode((byte)kb.AnimationIndex);
 
         return applied;
     }

@@ -210,6 +210,7 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
     private async Task RestoreFanPreferencesAsync()
     {
         var fan = _preferences.Current.Fan;
+        var daemonActive = DaemonRuntime.IsServiceActive();
         _isRestoringPreferences = true;
         try
         {
@@ -244,7 +245,19 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
             {
                 ActiveFanProfile = "manual";
                 IsCustomCurveEnabled = fan.IsCustomCurveEnabled;
+            }
+            else if (HasFanProfileAccess
+                     && !string.IsNullOrWhiteSpace(fan.ActiveFanProfile))
+            {
+                ActiveFanProfile = fan.ActiveFanProfile;
+            }
 
+            if (daemonActive)
+                return;
+
+            if (CanEditFanCurve
+                && string.Equals(fan.ActiveFanProfile, "manual", StringComparison.OrdinalIgnoreCase))
+            {
                 if (IsCustomCurveEnabled)
                     await ApplyCurve();
                 else
@@ -356,7 +369,7 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
         CpuFanPercent = status.CpuFanPercent;
         GpuFanPercent = status.GpuFanPercent;
 
-        if (IsCurveEditorVisible)
+        if (IsCurveEditorVisible && !DaemonRuntime.IsServiceActive())
             _ = ApplyCurveIfNeededAsync(status);
 
         if (IsAutoSwitchEnabled && HasFanProfileAccess)
@@ -583,10 +596,19 @@ public partial class FanControlViewModel : ObservableObject, IDisposable
 
         try
         {
-            // Update curves from view models
             _fanCurveService.SetCpuFanCurve(CpuFanCurve.Select(vm => new FanCurvePoint(vm.Temperature, vm.FanSpeed)));
             _fanCurveService.SetGpuFanCurve(GpuFanCurve.Select(vm => new FanCurvePoint(vm.Temperature, vm.FanSpeed)));
-            
+
+            if (DaemonRuntime.IsServiceActive())
+            {
+                await PersistFanStateAsync();
+                if (DaemonRuntime.RequestPreferencesReload())
+                    StatusMessage = "Custom curve saved — daemon updated";
+                else
+                    StatusMessage = "Custom curve saved — restart omencore service to apply";
+                return;
+            }
+
             await _fanCurveService.ApplyAsync();
             var status = await _hardwareService.GetStatusAsync();
             _lastAppliedCurveTemp = (int)Math.Max(status.CpuTemperature, status.GpuTemperature);

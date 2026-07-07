@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OmenCore.Avalonia.Services;
+using OmenCore.Linux.Daemon;
 
 namespace OmenCore.Avalonia.ViewModels;
 
@@ -335,6 +336,7 @@ public partial class SystemControlViewModel : ObservableObject
     private async Task RestoreKeyboardPreferencesAsync()
     {
         var kb = _preferences.Current.Keyboard;
+        var daemonActive = DaemonRuntime.IsServiceActive();
         _isRestoringPreferences = true;
         try
         {
@@ -346,8 +348,12 @@ public partial class SystemControlViewModel : ObservableObject
             UpdateKeyboardAnimationSelection(kb.AnimationIndex);
             SelectedKeyboardTimeoutIndex = TimeoutIndexForSeconds(kb.BacklightTimeoutSeconds);
 
-            if (HasFourZoneRgb || HasKeyboardBacklight)
-                await ApplyLightingAsync();
+            // Daemon already applied the saved palette/animation at boot — only push
+            // to hardware when it is not running (standalone GUI session).
+            if (daemonActive || (!HasFourZoneRgb && !HasKeyboardBacklight))
+                return;
+
+            await ApplyLightingAsync();
 
             if (kb.AnimationIndex > 0 && CanSetKeyboardAnimation)
                 await ApplyKeyboardAnimationAsync(AnimationUiIndexForMode(kb.AnimationIndex));

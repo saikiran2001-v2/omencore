@@ -74,8 +74,8 @@ public class LinuxHardwareService : IHardwareService, IDisposable
         };
         _pollingTimer.Start();
 
-        // Best-effort re-apply of the selected profile at startup.
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        // The daemon owns fan/keyboard hardware while it is running.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && !DaemonRuntime.IsServiceActive())
             _ = Task.Run(() => ReapplyFanProfile(_activeFanProfile));
     }
 
